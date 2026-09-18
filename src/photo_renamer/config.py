@@ -1,0 +1,157 @@
+"""Настройки программы: config.json рядом с программой.
+
+Файла может не быть, тогда действуют значения по умолчанию. Неверные значения не прерывают
+работу: берётся значение по умолчанию и выдаётся предупреждение. Ключи, начинающиеся
+с «_», считаются комментариями.
+"""
+
+import json
+import os
+from dataclasses import dataclass, field, fields
+from typing import List, Optional, Tuple
+
+from .features import HIST, PHASH, FeatureExtractor
+from .matcher import MatchConfig
+from .scanner import SORT_BY_EXIF, SORT_BY_NAME
+
+# src/photo_renamer/config.py → папка программы (где лежит run.py)
+APP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CONFIG_NAME = "config.json"
+
+
+@dataclass
+class AppConfig:
+    match: MatchConfig = field(default_factory=MatchConfig)
+    work_size: int = 256
+    hash_size: int = 8
+    hist_bins: Tuple[int, int, int] = (12, 4, 4)
+    rotations: int = 4
+    sort: str = SORT_BY_NAME
+    problem_categories: List[str] = field(default_factory=list)
+    logs_dir: str = "logs"
+
+    def extractor(self) -> FeatureExtractor:
+        return FeatureExtractor(self.work_size, self.hash_size, self.hist_bins, self.rotations)
+
+    def logs_path(self) -> str:
+        return self.logs_dir if os.path.isabs(self.logs_dir) else os.path.join(APP_DIR, self.logs_dir)
+
+
+def default_path() -> str:
+    return os.path.join(APP_DIR, CONFIG_NAME)
+
+
+def _number(lo, hi, integer=False):
+    def check(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "ожидается число"
+        if integer and int(value) != value:
+            return "ожидается целое число"
+        if not lo <= value <= hi:
+            return "допустимо от %s до %s" % (lo, hi)
+        return None
+    return check
+
+
+def _check_weights(value):
+    if not isinstance(value, dict) or not value:
+        return "ожидается объект вида {\"phash\": 0.6, \"hist\": 0.4}"
+    unknown = set(value) - {PHASH, HIST}
+    if unknown:
+        return "неизвестные признаки: %s" % ", ".join(sorted(unknown))
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 for v in value.values()):
+        return "веса должны быть неотрицательными числами"
+    if not any(v > 0 for v in value.values()):
+        return "хотя бы один вес должен быть больше 0"
+    return None
+
+
+def _check_bins(value):
+    if (not isinstance(value, list) or len(value) != 3
+            or any(isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 64 for v in value)):
+        return "ожидается список из трёх целых чисел от 1 до 64"
+    return None
+
+
+def _check_str_list(value):
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        return "ожидается список строк"
+    return None
+
+
+# ключ → (где хранится, проверка)
+_MATCH_KEYS = {
+    "min_confidence": _number(0, 100),
+    "max_distance": _number(0.01, 1.0),
+    "extra_penalty": _number(0, 1.0),
+    "temperature": _number(0.001, 1.0),
+    "top_n": _number(1, 10, integer=True),
+    "side_fill_max_distance": _number(0, 1.0),
+    "weights": _check_weights,
+}
+_APP_KEYS = {
+    "work_size": _number(32, 2048, integer=True),
+    "hash_size": _number(4, 32, integer=True),
+    "hist_bins": _check_bins,
+    "rotations": lambda v: None if v in (1, 2, 4) and not isinstance(v, bool) else "допустимо 1, 2 или 4",
+    "sort": lambda v: None if v in (SORT_BY_NAME, SORT_BY_EXIF) else "допустимо \"name\" или \"exif\"",
+    "problem_categories": _check_str_list,
+    "logs_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
+}
+
+
+def from_dict(data: dict) -> Tuple[AppConfig, List[str]]:
+    config = AppConfig()
+    warnings: List[str] = []
+    if not isinstance(data, dict):
+        return config, ["Настройки должны быть JSON-объектом, используются значения по умолчанию"]
+    for key, value in data.items():
+        if key.startswith("_"):
+            continue
+        check = _MATCH_KEYS.get(key) or _APP_KEYS.get(key)
+        if check is None:
+            warnings.append("Неизвестная настройка «%s» пропущена" % key)
+            continue
+        error = check(value)
+        if error:
+            warnings.append("Настройка «%s» = %r: %s. Используется значение по умолчанию" % (key, value, error))
+            continue
+        if key == "hist_bins":
+            value = tuple(value)
+        elif key == "weights":
+            value = {k: float(v) for k, v in value.items()}
+        elif key == "top_n":
+            value = int(value)
+        target = config.match if key in _MATCH_KEYS else config
+        setattr(target, key, value)
+    return config, warnings
+
+
+def to_dict(config: AppConfig) -> dict:
+    data = {f.name: getattr(config.match, f.name) for f in fields(MatchConfig)}
+    for f in fields(AppConfig):
+        if f.name != "match":
+            data[f.name] = getattr(config, f.name)
+    data["hist_bins"] = list(config.hist_bins)
+    return data
+
+
+def load_config(path: Optional[str] = None) -> Tuple[AppConfig, List[str]]:
+    """Возвращает (настройки, предупреждения). Отсутствие файла — не ошибка."""
+    path = path or default_path()
+    if not os.path.exists(path):
+        return AppConfig(), []
+    try:
+        # utf-8-sig: Блокнот Windows 7 сохраняет UTF-8 с BOM
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        return AppConfig(), ["Не удалось прочитать %s (%s), используются значения по умолчанию" % (path, exc)]
+    return from_dict(data)
+
+
+def save_config(config: AppConfig, path: Optional[str] = None) -> None:
+    path = path or default_path()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(to_dict(config), f, ensure_ascii=False, indent=2)
+        f.write("\n")

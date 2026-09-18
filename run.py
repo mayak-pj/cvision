@@ -8,9 +8,9 @@ sys.path.insert(0, os.path.join(APP_DIR, "src"))
 
 
 def main():
-    import photo_renamer
+    from photo_renamer import cli
 
-    print("Photo Renamer", photo_renamer.__version__, "- GUI появится на этапе 5.")
+    cli.main()
 
 
 if __name__ == "__main__":
