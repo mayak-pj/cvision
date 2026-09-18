@@ -89,7 +89,9 @@ _MATCH_KEYS = {
     "temperature": _number(0.001, 1.0),
     "top_n": _number(1, 10, integer=True),
     "side_fill_max_distance": _number(0, 1.0),
+    "side_fill_top_k": _number(1, 10, integer=True),
     "weights": _check_weights,
+    "adapt_power": _number(0, 16),
 }
 _APP_KEYS = {
     "work_size": _number(32, 2048, integer=True),
@@ -123,7 +125,7 @@ def from_dict(data: dict) -> Tuple[AppConfig, List[str]]:
             value = tuple(value)
         elif key == "weights":
             value = {k: float(v) for k, v in value.items()}
-        elif key == "top_n":
+        elif key in ("top_n", "side_fill_top_k"):
             value = int(value)
         target = config.match if key in _MATCH_KEYS else config
         setattr(target, key, value)

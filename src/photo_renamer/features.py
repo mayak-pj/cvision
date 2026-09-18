@@ -5,8 +5,11 @@
   на реальных фото эталона он различает категории лучше остальных;
 - tiny    — цветная миниатюра 16×16 (общая компоновка и цвета), косинусное расстояние;
 - phash   — perceptual hash (алгоритм imagehash.phash), форма и контуры;
-- hist    — гистограмма HSV всего кадра (вместе с фоном).
-Веса признаков задаются в настройках. По умолчанию используются fg_hist и tiny.
+- hist    — гистограмма HSV всего кадра (вместе с фоном);
+- lbp     — гистограмма локальных бинарных шаблонов (текстура) по сетке 2×2. Устойчива к освещению;
+- hog     — гистограмма направлений контуров по сетке 4×4. Устойчива к освещению.
+Веса признаков задаются в настройках. По умолчанию: fg_hist ×2 + lbp ×1 + hog ×1,
+а матчер дополнительно подстраивает веса под освещение каждой папки (см. matcher).
 
 Файлы только читаются. Уменьшение изображения происходит в памяти, файл на диске не меняется.
 
@@ -28,7 +31,9 @@ PHASH = "phash"
 HIST = "hist"
 FG_HIST = "fg_hist"
 TINY = "tiny"
-ALL_FEATURES = (FG_HIST, TINY, PHASH, HIST)
+LBP = "lbp"
+HOG = "hog"
+ALL_FEATURES = (FG_HIST, TINY, PHASH, HIST, LBP, HOG)
 
 
 class FeatureError(Exception):
@@ -51,6 +56,10 @@ class Features:
     fg_hist: np.ndarray
     # Миниатюра (size*size*3), центрированная и нормированная к единичной длине.
     tiny: np.ndarray
+    # Гистограммы LBP по ячейкам сетки, склеенные; сумма = 1.
+    lbp: np.ndarray
+    # Гистограммы направлений градиента по ячейкам сетки, единичной длины.
+    hog: np.ndarray
 
 
 def load_image(path: str, work_size: int = 256) -> Image.Image:
@@ -130,6 +139,49 @@ def foreground_histogram(img: Image.Image, bins: Tuple[int, int, int] = (12, 4, 
     return np.concatenate(parts) / (grid * grid)
 
 
+def _gray(img: Image.Image, size: int) -> np.ndarray:
+    return np.asarray(img.convert("L").resize((size, size), Image.BILINEAR), dtype=np.float32)
+
+
+def lbp_histogram(img: Image.Image, grid: int = 2, size: int = 128) -> np.ndarray:
+    """Локальные бинарные шаблоны: каждый пиксель сравнивается с 8 соседями (8-битный код).
+    Код не меняется при изменении яркости и контраста, поэтому признак устойчив к освещению."""
+    g = _gray(img, size)
+    center = g[1:-1, 1:-1]
+    code = np.zeros(center.shape, dtype=np.int32)
+    neighbours = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)]
+    for bit, (dy, dx) in enumerate(neighbours):
+        code |= (g[1 + dy:size - 1 + dy, 1 + dx:size - 1 + dx] >= center).astype(np.int32) << bit
+    height, width = code.shape
+    parts = []
+    for gy in range(grid):
+        for gx in range(grid):
+            cell = code[gy * height // grid:(gy + 1) * height // grid, gx * width // grid:(gx + 1) * width // grid]
+            hist = np.bincount(cell.ravel(), minlength=256).astype(np.float32)
+            parts.append(hist / max(hist.sum(), 1.0))
+    return np.concatenate(parts) / (grid * grid)
+
+
+def hog_vector(img: Image.Image, bins: int = 12, grid: int = 4, size: int = 128) -> np.ndarray:
+    """Упрощённый HOG: гистограммы направлений градиента (взвешенные по силе) по ячейкам сетки."""
+    g = _gray(img, size)
+    gx = np.zeros_like(g)
+    gy = np.zeros_like(g)
+    gx[:, 1:-1] = g[:, 2:] - g[:, :-2]
+    gy[1:-1] = g[2:] - g[:-2]
+    magnitude = np.hypot(gx, gy)
+    direction = np.minimum(((np.arctan2(gy, gx) % np.pi) / np.pi * bins).astype(np.int64), bins - 1)
+    step = size // grid
+    parts = []
+    for i in range(grid):
+        for j in range(grid):
+            cell = (slice(i * step, (i + 1) * step), slice(j * step, (j + 1) * step))
+            hist = np.bincount(direction[cell].ravel(), weights=magnitude[cell].ravel(), minlength=bins)
+            parts.append(hist / (np.linalg.norm(hist) + 1e-6))
+    v = np.concatenate(parts)
+    return (v / (np.linalg.norm(v) + 1e-6)).astype(np.float32)
+
+
 def balance_by_background(img: Image.Image, target: float = 128.0, border: int = 4,
                           limits: Tuple[float, float] = (0.5, 2.0)) -> Image.Image:
     """«Баланс белого по фону»: каналы RGB умножаются так, чтобы фон (медиана краёв кадра)
@@ -187,6 +239,8 @@ class FeatureExtractor:
             hist=hsv_histogram(img, self.hist_bins),
             fg_hist=foreground_histogram(img, self.hist_bins, self.grid, self.background_threshold),
             tiny=tiny_vector(img, self.tiny_size),
+            lbp=lbp_histogram(img),
+            hog=hog_vector(img),
         )
 
     def from_file(self, path: str) -> Features:
@@ -197,7 +251,8 @@ class FeatureExtractor:
 
         phash: доля различающихся бит (0 — одинаковые, около 0.5 — несвязанные), минимум по поворотам b.
         hist, fg_hist: 1 − пересечение гистограмм (0 — одинаковые цвета, 1 — совсем разные).
-        tiny: (1 − косинус) / 2.
+        tiny, hog: (1 − косинус) / 2.
+        lbp: 1 − пересечение гистограмм.
         """
         a_hash = np.stack([f.phash[0] for f in a])                 # (n, bits)
         b_hash = np.stack([f.phash for f in b])                    # (m, R, bits)
@@ -213,12 +268,18 @@ class FeatureExtractor:
         fg_hist = 1.0 - np.minimum(a_fg[:, None, :], b_fg[None, :, :]).sum(axis=-1)
 
         tiny = (1.0 - np.stack([f.tiny for f in a]) @ np.stack([f.tiny for f in b]).T) / 2.0
+        hog = (1.0 - np.stack([f.hog for f in a]) @ np.stack([f.hog for f in b]).T) / 2.0
+        a_lbp = np.stack([f.lbp for f in a])
+        b_lbp = np.stack([f.lbp for f in b])
+        lbp = 1.0 - np.minimum(a_lbp[:, None, :], b_lbp[None, :, :]).sum(axis=-1)
 
         return {
             PHASH: phash,
             HIST: np.clip(hist, 0.0, 1.0),
             FG_HIST: np.clip(fg_hist, 0.0, 1.0),
             TINY: np.clip(tiny, 0.0, 1.0),
+            LBP: np.clip(lbp, 0.0, 1.0),
+            HOG: np.clip(hog, 0.0, 1.0),
         }
 
 

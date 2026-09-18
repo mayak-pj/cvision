@@ -32,7 +32,7 @@ REF = [
     "Кабель DP.jpg",
     "Кабель DP-miniDP.jpg",
 ]
-FAR = 0.5
+FAR = 0.6  # «непохожее» фото: дальше и max_distance, и side_fill_max_distance
 
 
 class FakeModel(ReferenceModel):
@@ -53,9 +53,9 @@ class FakeModel(ReferenceModel):
         for (i, name, side), d in (side_rows or {}).items():
             self._side[i, self.cat_index[category_key(name)], side - 1] = d
 
-    def distances(self, target_features, weights):
+    def distances(self, target_features, weights, adapt_power=0.0):
         idx = list(target_features)  # «признаки» — это индексы фото
-        return self._cat[idx], self._side[idx]
+        return self._cat[idx], self._side[idx], dict(weights)
 
 
 def run(rows, names=None, side_rows=None, config=None, unreadable=(), ref_names=REF):
@@ -150,8 +150,8 @@ def test_confidence_threshold_is_configurable():
 
 
 def test_side_rule_completes_pair():
-    # вторая сторона памяти похожа слабо (дальше max_distance), но идёт сразу после первой
-    rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.35}, {"Кулер": 0.08}]
+    # вторая сторона памяти похожа слабо (дальше max_distance 0.40, ближе side_fill 0.50), но идёт сразу после первой
+    rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.45}, {"Кулер": 0.08}]
     result = run(rows)
     assert result.photos[1].status == STATUS_SIDE_RULE
     assert new_names(result) == [

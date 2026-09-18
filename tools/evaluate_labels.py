@@ -115,16 +115,19 @@ def main():
     if not args.grid:
         return
 
-    weights = {"fg_hist2+tiny1": {feat.FG_HIST: 2, feat.TINY: 1}, "fg_hist1+tiny1": {feat.FG_HIST: 1, feat.TINY: 1},
-               "tiny": {feat.TINY: 1}, "fg_hist": {feat.FG_HIST: 1},
-               "fg_hist2+tiny1+phash1": {feat.FG_HIST: 2, feat.TINY: 1, feat.PHASH: 1}}
+    weights = {
+        "fg2+lbp1+hog1": {feat.FG_HIST: 2, feat.LBP: 1, feat.HOG: 1},
+        "fg2+lbp2+hog1": {feat.FG_HIST: 2, feat.LBP: 2, feat.HOG: 1},
+        "fg3+lbp2+hog1": {feat.FG_HIST: 3, feat.LBP: 2, feat.HOG: 1},
+        "fg2+tiny1+lbp2+hog1": {feat.FG_HIST: 2, feat.TINY: 1, feat.LBP: 2, feat.HOG: 1},
+    }
     rows = []
-    for wb_flag, (wname, w), max_d, min_conf, temp in itertools.product(
-            (False, True), weights.items(), (0.30, 0.35, 0.40, 0.45), (40, 50, 60, 70, 80), (0.03, 0.05, 0.08)):
-        config = matcher.MatchConfig(weights=w, max_distance=max_d, min_confidence=min_conf, temperature=temp,
-                                     side_fill_max_distance=max_d + 0.10)
+    for wb_flag, (wname, w), power, max_d, min_conf, temp in itertools.product(
+            (False, True), weights.items(), (0, 2, 4, 6), (0.30, 0.35, 0.40), (40, 50, 60, 70), (0.03, 0.05)):
+        config = matcher.MatchConfig(weights=w, adapt_power=power, max_distance=max_d, min_confidence=min_conf,
+                                     temperature=temp, side_fill_max_distance=max_d + 0.10)
         counts, per_folder = evaluate(wb_flag, config)
-        label = "wb=%d %s max_d=%.2f conf=%d T=%.2f" % (wb_flag, wname, max_d, min_conf, temp)
+        label = "wb=%d %s p=%d max_d=%.2f conf=%d T=%.2f" % (wb_flag, wname, power, max_d, min_conf, temp)
         rows.append((counts["НЕВЕРНО"], -counts["верно"], line(label, counts, per_folder)))
     print("\nЛучшие настройки (сначала меньше неверных, затем больше верных):")
     for _, _, text in sorted(rows)[:25]:

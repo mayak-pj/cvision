@@ -45,15 +45,18 @@ IDENTIFIED = (STATUS_OK, STATUS_SIDE_RULE, STATUS_MANUAL, STATUS_ALREADY_NAMED)
 
 @dataclass
 class MatchConfig:
-    # Подобрано на реальных фото эталона (сравнение каждого фото с остальными): fg_hist 2 + tiny 1
-    # дают около 92% верных ближайших соседей против 83% у phash + hist.
-    weights: Dict[str, float] = field(default_factory=lambda: {feat.FG_HIST: 2.0, feat.TINY: 1.0})
-    max_distance: float = 0.35          # дальше этого расстояния фото не относится ни к одной категории
+    # Подобрано по ручной разметке реальных папок (docs/decisions.md): цвет без фона + текстура + контуры.
+    weights: Dict[str, float] = field(default_factory=lambda: {feat.FG_HIST: 2.0, feat.LBP: 1.0, feat.HOG: 1.0})
+    # Подстройка весов под освещение папки: вес признака делится на (рост расстояний)^adapt_power.
+    # 0 — не подстраивать.
+    adapt_power: float = 4.0
+    max_distance: float = 0.40          # дальше этого расстояния фото не относится ни к одной категории
     extra_penalty: float = 0.05         # штраф за экземпляр сверх количества в эталоне
     temperature: float = 0.05           # «резкость» % уверенности
-    min_confidence: float = 60.0        # ниже — фото считается неопознанным
+    min_confidence: float = 50.0        # ниже — фото считается неопознанным
     top_n: int = 3                      # сколько кандидатов показывать для неопознанных
-    side_fill_max_distance: float = 0.45  # до какого расстояния соседнее фото достраивает сторону
+    side_fill_max_distance: float = 0.50  # до какого расстояния соседнее фото достраивает сторону
+    side_fill_top_k: int = 2            # ...и только если категория среди стольких первых кандидатов фото
 
 
 @dataclass
@@ -115,6 +118,7 @@ class ReferenceModel:
         self.ref_cat = np.array(ref_cat, dtype=int)
         self.ref_side = np.array(ref_side, dtype=int)
         self.scales = self._compute_scales()
+        self.levels = self._compute_levels()
 
     def _compute_scales(self) -> Dict[str, float]:
         """Масштабы признаков по эталону: среднее расстояние между разными категориями → 0.5."""
@@ -124,6 +128,37 @@ class ReferenceModel:
         comps = self.extractor.distance_components(self.ref_features, self.ref_features)
         return feat.component_scales(comps, different)
 
+    def _compute_levels(self) -> Dict[str, float]:
+        """«Норма» каждого признака: медиана расстояния от эталонного фото до ближайшего другого."""
+        if self.extractor is None or len(self.ref_features) < 2:
+            return {}
+        comps = self.extractor.distance_components(self.ref_features, self.ref_features)
+        levels = {}
+        for name, m in comps.items():
+            m = m * self.scales.get(name, 1.0)
+            np.fill_diagonal(m, np.inf)
+            levels[name] = float(np.median(m.min(axis=1)))
+        return levels
+
+    MIN_PHOTOS_TO_ADAPT = 8
+
+    def adapted_weights(self, comps: Dict[str, np.ndarray], weights: Dict[str, float],
+                        power: float) -> Dict[str, float]:
+        """Ослабляет признаки, расстояния которых в этой папке выросли сильнее обычного
+        (типично — цвет при другом освещении). Рост = медиана расстояния до ближайшего эталонного
+        фото в папке / та же медиана внутри эталона, ограничен диапазоном [1, 4]."""
+        n = next(iter(comps.values())).shape[0] if comps else 0
+        if power <= 0 or n < self.MIN_PHOTOS_TO_ADAPT or not self.levels:
+            return dict(weights)
+        adapted = {}
+        for name, w in weights.items():
+            if w <= 0 or name not in comps or self.levels.get(name, 0) <= 1e-6:
+                adapted[name] = w
+                continue
+            growth = float(np.median(comps[name].min(axis=1))) / self.levels[name]
+            adapted[name] = w / min(max(growth, 1.0), 4.0) ** power
+        return adapted
+
     @classmethod
     def build(cls, reference: Reference, extractor: feat.FeatureExtractor, on_progress=None) -> "ReferenceModel":
         features, errors = feat.extract_many(extractor, [p.path for p in reference.photos], on_progress)
@@ -131,18 +166,20 @@ class ReferenceModel:
         model.warnings[:0] = ["Эталонное фото не прочитано: %s (%s)" % (e.path, e.reason) for e in errors]
         return model
 
-    def distances(self, target_features: Sequence[feat.Features], weights: Dict[str, float]):
-        """Возвращает (cat_dist, side_dist).
+    def distances(self, target_features: Sequence[feat.Features], weights: Dict[str, float],
+                  adapt_power: float = 0.0):
+        """Возвращает (cat_dist, side_dist, веса после подстройки).
 
         cat_dist[i, c] — расстояние фото i до категории c.
         side_dist[i, c, s-1] — до стороны s категории c (inf, если такой стороны в эталоне нет).
         """
         n, n_cat = len(target_features), len(self.categories)
         if n == 0 or n_cat == 0:
-            return np.full((n, n_cat), np.inf), np.full((n, n_cat, self.max_sides), np.inf)
+            return np.full((n, n_cat), np.inf), np.full((n, n_cat, self.max_sides), np.inf), dict(weights)
         comps = self.extractor.distance_components(target_features, self.ref_features)
         comps = {name: m * self.scales.get(name, 1.0) for name, m in comps.items()}
-        dist = feat.combine(comps, weights)  # (n, число эталонных фото)
+        used = self.adapted_weights(comps, weights, adapt_power)
+        dist = feat.combine(comps, used)  # (n, число эталонных фото)
 
         cat_dist = np.full((n, n_cat), np.inf)
         side_dist = np.full((n, n_cat, self.max_sides), np.inf)
@@ -153,7 +190,7 @@ class ReferenceModel:
                 mask = in_cat & (self.ref_side == s)
                 if mask.any():
                     side_dist[:, c, s - 1] = dist[:, mask].min(axis=1)
-        return cat_dist, side_dist
+        return cat_dist, side_dist, used
 
 
 @dataclass
@@ -166,6 +203,7 @@ class FolderMatch:
     side_dist: np.ndarray
     feature_row: Dict[int, int]  # индекс фото → строка в cat_dist/side_dist
     warnings: List[str] = field(default_factory=list)
+    weights_used: Dict[str, float] = field(default_factory=dict)  # веса после подстройки под папку
 
     def category_counts(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
@@ -232,7 +270,8 @@ def match_features(
 
     rows = [i for i, f in enumerate(feature_list) if f is not None and i not in fixed]
     feature_row = {i: r for r, i in enumerate(rows)}
-    cat_dist, side_dist = model.distances([feature_list[i] for i in rows], config.weights)
+    cat_dist, side_dist, weights_used = model.distances([feature_list[i] for i in rows], config.weights,
+                                                        config.adapt_power)
 
     photos = [PhotoMatch(i, name, STATUS_UNREADABLE) for i, name in enumerate(filenames)]
     for i, (cat, instance, side) in fixed.items():
@@ -242,7 +281,8 @@ def match_features(
         if photos[i].status == STATUS_UNREADABLE:
             photos[i].note = "не удалось прочитать фото" + (": " + unreadable[i] if unreadable.get(i) else "")
 
-    result = FolderMatch(folder, photos, model, config, cat_dist, side_dist, feature_row)
+    result = FolderMatch(folder, photos, model, config, cat_dist, side_dist, feature_row,
+                         weights_used=weights_used)
     if rows and model.categories:
         _assign_categories(result, rows, _occupied_capacity(model, fixed))
     _complete_sides(result)
@@ -348,6 +388,10 @@ def _complete_sides(result: FolderMatch) -> None:
                 if p.status not in (STATUS_LOW_CONFIDENCE, STATUS_NO_MATCH) or row is None:
                     continue
                 if result.cat_dist[row, c] > config.side_fill_max_distance:
+                    continue
+                # категория должна быть среди первых кандидатов самого фото: без этого правило
+                # «достраивало» стороны фото, почти не похожим на категорию (ошибки на реальных папках)
+                if cat.name not in [k.category for k in p.candidates[:config.side_fill_top_k]]:
                     continue
                 p.status = STATUS_SIDE_RULE
                 p.category = cat

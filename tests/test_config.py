@@ -13,14 +13,14 @@ def write(path, data, bom=False):
 def test_missing_file_gives_defaults(tmp_path):
     config, warnings = cfg.load_config(str(tmp_path / "нет.json"))
     assert warnings == []
-    assert config.match.min_confidence == 60
+    assert config.match.min_confidence == 50
     assert config.logs_path() == os.path.join(cfg.APP_DIR, "logs")
 
 
 def test_example_config_is_valid():
     config, warnings = cfg.load_config(os.path.join(cfg.APP_DIR, "config.example.json"))
     assert warnings == []
-    assert "Кабель DP" in config.problem_categories
+    assert "Патч-корд" in config.problem_categories
 
 
 def test_values_are_applied_and_bom_accepted(tmp_path):
@@ -42,7 +42,7 @@ def test_invalid_values_fall_back_with_warnings(tmp_path):
                  "top_n": 2.5, "sort": "size", "неизвестно": 1, "hist_bins": [1, 2]})
     config, warnings = cfg.load_config(str(path))
     assert len(warnings) == 8
-    assert config.match.min_confidence == 60 and config.match.max_distance == 0.35
+    assert config.match.min_confidence == 50 and config.match.max_distance == 0.40
     assert config.rotations == 1 and config.sort == "name"
 
 
@@ -50,7 +50,7 @@ def test_broken_json(tmp_path):
     path = tmp_path / "config.json"
     path.write_text("{ не json", encoding="utf-8")
     config, warnings = cfg.load_config(str(path))
-    assert len(warnings) == 1 and config.match.min_confidence == 60
+    assert len(warnings) == 1 and config.match.min_confidence == 50
 
 
 def test_save_load_roundtrip(tmp_path):
