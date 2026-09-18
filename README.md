@@ -52,6 +52,7 @@ docs/                проектные решения, инструкции
 logs/                логи работы программы (в git не попадают)
 dist_offline/        скрипты и инструкции для офлайн-сборки (wheel-файлы в git не попадают)
 test_photos/         локальные тестовые фото (в git НЕ попадают, реальные данные)
+tools/               инструменты разработчика (разметка и оценка точности)
 run.py               точка входа
 ```
 
@@ -86,6 +87,10 @@ python3.8 -m venv .venv
 PYTHONPATH=src .venv/bin/python -m photo_renamer.scanner <папка проекта> --exclude <эталон>
 PYTHONPATH=src .venv/bin/python -m photo_renamer.reference <эталон>
 PYTHONPATH=src .venv/bin/python -m photo_renamer.matcher <эталон> <папка> [<папка> ...]
+
+# калибровка на реальных фото: таблица для ручной разметки и оценка точности по ней
+.venv/bin/python tools/make_labels.py -r <эталон> <папка> [...] --out "logs/разметка/файл.xlsx"
+.venv/bin/python tools/evaluate_labels.py -r <эталон> "logs/разметка/файл.xlsx" [--grid]
 ```
 
 ## Разработка

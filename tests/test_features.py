@@ -188,3 +188,19 @@ def test_component_scales():
     different = np.array([[False, True], [True, False]])
     scales = component_scales(comps, different)
     assert scales[PHASH] == pytest.approx(1.25) and scales[TINY] == pytest.approx(5.0)
+
+
+def test_white_balance_makes_background_neutral_and_matches_lighting():
+    from photo_renamer.features import balance_by_background, foreground_mask
+
+    img = make_part(3)
+    arr = np.asarray(img, dtype=np.float32) * np.array([0.8, 0.9, 1.15])  # другое освещение
+    shifted = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+    balanced = np.asarray(balance_by_background(shifted), dtype=np.float32)
+    background = balanced[~foreground_mask(img)]
+    assert np.abs(np.median(background, axis=0) - 128).max() <= 3
+
+    plain, wb = FeatureExtractor(), FeatureExtractor(white_balance=True)
+    d_plain = plain.distance_components([plain.from_image(img)], [plain.from_image(shifted)])[FG_HIST][0, 0]
+    d_wb = wb.distance_components([wb.from_image(img)], [wb.from_image(shifted)])[FG_HIST][0, 0]
+    assert d_wb < d_plain

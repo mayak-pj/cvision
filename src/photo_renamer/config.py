@@ -26,12 +26,14 @@ class AppConfig:
     hash_size: int = 8
     hist_bins: Tuple[int, int, int] = (12, 4, 4)
     rotations: int = 1
+    white_balance: bool = False
     sort: str = SORT_BY_NAME
     problem_categories: List[str] = field(default_factory=list)
     logs_dir: str = "logs"
 
     def extractor(self) -> FeatureExtractor:
-        return FeatureExtractor(self.work_size, self.hash_size, self.hist_bins, self.rotations)
+        return FeatureExtractor(self.work_size, self.hash_size, self.hist_bins, self.rotations,
+                                white_balance=self.white_balance)
 
     def logs_path(self) -> str:
         return self.logs_dir if os.path.isabs(self.logs_dir) else os.path.join(APP_DIR, self.logs_dir)
@@ -94,6 +96,7 @@ _APP_KEYS = {
     "hash_size": _number(4, 32, integer=True),
     "hist_bins": _check_bins,
     "rotations": lambda v: None if v in (1, 2, 4) and not isinstance(v, bool) else "допустимо 1, 2 или 4",
+    "white_balance": lambda v: None if isinstance(v, bool) else "ожидается true или false",
     "sort": lambda v: None if v in (SORT_BY_NAME, SORT_BY_EXIF) else "допустимо \"name\" или \"exif\"",
     "problem_categories": _check_str_list,
     "logs_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",

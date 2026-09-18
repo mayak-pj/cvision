@@ -130,6 +130,18 @@ def foreground_histogram(img: Image.Image, bins: Tuple[int, int, int] = (12, 4, 
     return np.concatenate(parts) / (grid * grid)
 
 
+def balance_by_background(img: Image.Image, target: float = 128.0, border: int = 4,
+                          limits: Tuple[float, float] = (0.5, 2.0)) -> Image.Image:
+    """«Баланс белого по фону»: каналы RGB умножаются так, чтобы фон (медиана краёв кадра)
+    стал нейтрально-серым. Выравнивает разное освещение и баланс белого между съёмками.
+    Меняется только копия в памяти."""
+    a = np.asarray(img.convert("RGB"), dtype=np.float32)
+    edges = np.concatenate([a[:border].reshape(-1, 3), a[-border:].reshape(-1, 3),
+                            a[:, :border].reshape(-1, 3), a[:, -border:].reshape(-1, 3)])
+    gains = np.clip(target / np.maximum(np.median(edges, axis=0), 1.0), *limits)
+    return Image.fromarray(np.clip(a * gains, 0, 255).astype(np.uint8))
+
+
 def tiny_vector(img: Image.Image, size: int = 16) -> np.ndarray:
     """Цветная миниатюра size×size: вектор без среднего, единичной длины (для косинусного расстояния)."""
     v = np.asarray(img.convert("RGB").resize((size, size), Image.BOX), dtype=np.float32).ravel()
@@ -149,6 +161,7 @@ class FeatureExtractor:
         grid: int = 2,
         tiny_size: int = 16,
         background_threshold: float = 40.0,
+        white_balance: bool = False,
     ):
         if rotations not in (1, 2, 4):
             raise ValueError("rotations должно быть 1, 2 или 4")
@@ -161,8 +174,11 @@ class FeatureExtractor:
         self.grid = grid
         self.tiny_size = tiny_size
         self.background_threshold = background_threshold
+        self.white_balance = white_balance
 
     def from_image(self, img: Image.Image) -> Features:
+        if self.white_balance:
+            img = balance_by_background(img)
         step = 4 // self.rotations
         hashes = [phash_bits(img.rotate(90 * step * r, expand=True) if r else img, self.hash_size)
                   for r in range(self.rotations)]
