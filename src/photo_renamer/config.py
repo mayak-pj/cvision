@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass, field, fields
 from typing import List, Optional, Tuple
 
-from .features import HIST, PHASH, FeatureExtractor
+from .features import ALL_FEATURES, FeatureExtractor
 from .matcher import MatchConfig
 from .scanner import SORT_BY_EXIF, SORT_BY_NAME
 
@@ -25,7 +25,7 @@ class AppConfig:
     work_size: int = 256
     hash_size: int = 8
     hist_bins: Tuple[int, int, int] = (12, 4, 4)
-    rotations: int = 4
+    rotations: int = 1
     sort: str = SORT_BY_NAME
     problem_categories: List[str] = field(default_factory=list)
     logs_dir: str = "logs"
@@ -55,8 +55,8 @@ def _number(lo, hi, integer=False):
 
 def _check_weights(value):
     if not isinstance(value, dict) or not value:
-        return "ожидается объект вида {\"phash\": 0.6, \"hist\": 0.4}"
-    unknown = set(value) - {PHASH, HIST}
+        return "ожидается объект вида {\"fg_hist\": 2, \"tiny\": 1}"
+    unknown = set(value) - set(ALL_FEATURES)
     if unknown:
         return "неизвестные признаки: %s" % ", ".join(sorted(unknown))
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 for v in value.values()):

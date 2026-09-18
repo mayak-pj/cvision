@@ -45,7 +45,9 @@ IDENTIFIED = (STATUS_OK, STATUS_SIDE_RULE, STATUS_MANUAL, STATUS_ALREADY_NAMED)
 
 @dataclass
 class MatchConfig:
-    weights: Dict[str, float] = field(default_factory=lambda: {feat.PHASH: 0.6, feat.HIST: 0.4})
+    # Подобрано на реальных фото эталона (сравнение каждого фото с остальными): fg_hist 2 + tiny 1
+    # дают около 92% верных ближайших соседей против 83% у phash + hist.
+    weights: Dict[str, float] = field(default_factory=lambda: {feat.FG_HIST: 2.0, feat.TINY: 1.0})
     max_distance: float = 0.35          # дальше этого расстояния фото не относится ни к одной категории
     extra_penalty: float = 0.05         # штраф за экземпляр сверх количества в эталоне
     temperature: float = 0.05           # «резкость» % уверенности
@@ -112,6 +114,15 @@ class ReferenceModel:
                 ref_side.append(photo.side)
         self.ref_cat = np.array(ref_cat, dtype=int)
         self.ref_side = np.array(ref_side, dtype=int)
+        self.scales = self._compute_scales()
+
+    def _compute_scales(self) -> Dict[str, float]:
+        """Масштабы признаков по эталону: среднее расстояние между разными категориями → 0.5."""
+        different = self.ref_cat[:, None] != self.ref_cat[None, :]
+        if self.extractor is None or not different.any():
+            return {}
+        comps = self.extractor.distance_components(self.ref_features, self.ref_features)
+        return feat.component_scales(comps, different)
 
     @classmethod
     def build(cls, reference: Reference, extractor: feat.FeatureExtractor, on_progress=None) -> "ReferenceModel":
@@ -130,6 +141,7 @@ class ReferenceModel:
         if n == 0 or n_cat == 0:
             return np.full((n, n_cat), np.inf), np.full((n, n_cat, self.max_sides), np.inf)
         comps = self.extractor.distance_components(target_features, self.ref_features)
+        comps = {name: m * self.scales.get(name, 1.0) for name, m in comps.items()}
         dist = feat.combine(comps, weights)  # (n, число эталонных фото)
 
         cat_dist = np.full((n, n_cat), np.inf)

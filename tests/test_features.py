@@ -6,8 +6,10 @@ import pytest
 from PIL import Image
 
 from photo_renamer.features import (
+    FG_HIST,
     HIST,
     PHASH,
+    TINY,
     FeatureError,
     FeatureExtractor,
     combine,
@@ -132,9 +134,9 @@ def test_combine_weights():
 
 
 def test_nearest_reference_is_same_part():
-    """Главная проверка признаков: переснятая деталь ближе всего к своему эталону."""
+    """Переснятая деталь (в том числе повёрнутая) ближе всего к своему эталону по phash (с поворотами) + hist."""
     n_parts = 15
-    ex = FeatureExtractor()
+    ex = FeatureExtractor(rotations=4)
     refs = [ex.from_image(make_part(s)) for s in range(n_parts)]
     shots, truth = [], []
     for s in range(n_parts):
@@ -145,3 +147,44 @@ def test_nearest_reference_is_same_part():
     predicted = dist.argmin(axis=1)
     accuracy = (predicted == np.array(truth)).mean()
     assert accuracy == 1.0, "точность %.2f" % accuracy
+
+
+def test_default_features_nearest_reference_without_rotation():
+    """Признаки по умолчанию (fg_hist + tiny): переснятая деталь без поворота ближе всего к своему эталону."""
+    from photo_renamer.features import component_scales
+
+    ex = FeatureExtractor()
+    refs = [ex.from_image(make_part(s)) for s in range(15)]
+    shots = [ex.from_image(perturb(make_part(s), seed=s * 10 + k)) for s in range(15) for k in range(3)]
+    scales = component_scales(ex.distance_components(refs, refs), ~np.eye(15, dtype=bool))
+    comps = {k: v * scales[k] for k, v in ex.distance_components(shots, refs).items()}
+    dist = combine(comps, {FG_HIST: 2.0, TINY: 1.0})
+    # синтетические искажения яркости жёстче реальных, одна ошибка из 45 допустима
+    assert (dist.argmin(axis=1) == np.repeat(np.arange(15), 3)).mean() >= 0.95
+
+
+def test_foreground_mask_ignores_background():
+    from photo_renamer.features import foreground_histogram, foreground_mask
+
+    img = make_part(2)
+    mask = foreground_mask(img)
+    assert 0.05 < mask.mean() < 0.95
+    # один и тот же предмет на фонах разного оттенка даёт близкие гистограммы без фона
+    arr = np.asarray(img).copy()
+    background = ~mask
+    arr[background] = (205, 215, 230)
+    other = Image.fromarray(arr)
+    plain = hsv_histogram(img), hsv_histogram(other)
+    fg = foreground_histogram(img), foreground_histogram(other)
+    d_plain = 1 - np.minimum(*plain).sum()
+    d_fg = 1 - np.minimum(*fg).sum()
+    assert d_fg < d_plain / 3
+
+
+def test_component_scales():
+    from photo_renamer.features import component_scales
+
+    comps = {PHASH: np.array([[0.0, 0.4], [0.4, 0.0]]), TINY: np.array([[0.0, 0.1], [0.1, 0.0]])}
+    different = np.array([[False, True], [True, False]])
+    scales = component_scales(comps, different)
+    assert scales[PHASH] == pytest.approx(1.25) and scales[TINY] == pytest.approx(5.0)

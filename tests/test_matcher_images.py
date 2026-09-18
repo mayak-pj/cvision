@@ -50,7 +50,7 @@ def make_target(folder, shots):
 
 
 def test_complete_folder(model, tmp_path):
-    shots = [(7, 0), (5, 90), (6, 90), (1, 0), (2, 180), (8, 0), (5, 0), (6, 0), (3, 0), (4, 270), (9, 0), (10, 0)]
+    shots = [(7, 0), (5, 0), (6, 0), (1, 0), (2, 0), (8, 0), (5, 0), (6, 0), (3, 0), (4, 0), (9, 0), (10, 0)]
     names = make_target(tmp_path / "SN001", shots)
     result = match_folder(model, str(tmp_path / "SN001"), names)
     assert [p.new_name for p in result.photos] == [
