@@ -6,6 +6,8 @@
     python run.py --reference <эталон> <папки> --apply
 Откат по логу:
     python run.py --rollback logs/<файл>.csv
+Анализ проекта: какие папки похожи и какие эталоны нужны:
+    python run.py --groups <папка проекта>
 """
 
 import argparse
@@ -15,7 +17,8 @@ import time
 from typing import List, Optional
 
 from . import config as cfg
-from . import oplog, renamer
+from . import grouping, oplog, renamer
+from .cache import PhotoCache
 from .matcher import ReferenceModel, match_folder
 from .reference import describe, load_reference
 from .report import build_report, format_report
@@ -66,14 +69,17 @@ def run_batch(reference_dir: str, targets: List[str], config: cfg.AppConfig, app
             log.record(e.path, oplog.ACTION_KEEP, oplog.RESULT_ERROR, message=e.message)
 
         started = time.time()
-        model = ReferenceModel.build(reference, config.extractor(), _progress("Эталон, чтение фото"))
+        cache = PhotoCache(config.cache_path(), config.cache_max_mb)
+        model = ReferenceModel.build(reference, config.extractor(), _progress("Эталон, чтение фото"),
+                                     feature_source=cache.extract_many)
         for w in model.warnings:
             out("ВНИМАНИЕ: " + w)
             log.write_text("ВНИМАНИЕ: " + w)
 
         for n, scan in enumerate(scans, start=1):
             out("\nПапка %d из %d: %s" % (n, len(scans), scan.path))
-            match = match_folder(model, scan.path, scan.photos, config.match, _progress("  чтение фото"))
+            match = match_folder(model, scan.path, scan.photos, config.match, _progress("  чтение фото"),
+                                 feature_source=cache.extract_many)
             try:
                 plan = renamer.build_plan(match)
             except OSError as exc:
@@ -108,8 +114,25 @@ def run_batch(reference_dir: str, targets: List[str], config: cfg.AppConfig, app
             out(result_text.split("\n\n", 1)[-1])
             log.write_text(result_text)
 
+        cache.close()
         out("\nГотово за %.0f с. Лог: %s\nОтчёт: %s" % (time.time() - started, log.csv_path, log.txt_path))
         return log.csv_path
+
+
+def run_groups(roots: List[str], config: cfg.AppConfig, out=print) -> grouping.ProjectAnalysis:
+    started = time.time()
+    cache = PhotoCache(config.cache_path(), config.cache_max_mb)
+    try:
+        analysis = grouping.analyze_project(
+            roots, config.extractor(), config.match.weights, config.group_threshold,
+            feature_source=cache.extract_many, sort=config.sort,
+            on_folder=lambda n, total, path: out("Папка %d из %d: %s" % (n, total, path)),
+            on_progress=_progress("  чтение фото"))
+    finally:
+        cache.close()
+    out(grouping.describe(analysis))
+    out("Время: %.0f с" % (time.time() - started))
+    return analysis
 
 
 def run_rollback(log_path: str, config: cfg.AppConfig, folder: Optional[str] = None, out=print) -> str:
@@ -133,6 +156,7 @@ def main(argv=None):
     parser.add_argument("--apply", action="store_true", help="переименовать (без флага — только проверка)")
     parser.add_argument("--yes", action="store_true", help="не спрашивать подтверждение для каждой папки")
     parser.add_argument("--rollback", metavar="CSV", help="откатить переименования по логу")
+    parser.add_argument("--groups", action="store_true", help="анализ: группы похожих папок и нужные эталоны")
     parser.add_argument("--config", help="файл настроек (по умолчанию config.json рядом с программой)")
     args = parser.parse_args(argv)
 
@@ -142,6 +166,8 @@ def main(argv=None):
 
     if args.rollback:
         run_rollback(args.rollback, config)
+    elif args.groups and args.targets:
+        run_groups(args.targets, config)
     elif args.reference and args.targets:
         run_batch(args.reference, args.targets, config, args.apply, args.yes)
     else:

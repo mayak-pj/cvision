@@ -65,6 +65,9 @@ python run.py --reference "\\server\share\Проект\Эталон" "\\server\s
 rem Переименование: по каждой папке показывается отчёт и задаётся вопрос [д/н]
 python run.py --reference "...\Эталон" "...\Проект" --apply
 
+rem Анализ проекта: группы похожих папок и какие эталоны нужны
+python run.py --groups "\\server\share\Проект"
+
 rem Откат по логу запуска
 python run.py --rollback "logs\2026-09-18_14-30-05_Проект.csv"
 ```

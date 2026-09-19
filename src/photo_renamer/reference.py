@@ -26,8 +26,10 @@ _NAME_RE = re.compile(
     r"(?:\s+(?P<side_word>фото)\s*(?P<side>\d+))?$",
     re.IGNORECASE,
 )
-# Имена камер и телефонов: признак того, что файл в эталоне не переименовали.
-_CAMERA_NAME_RE = re.compile(r"^(dsc|dscn|dcim|img|pxl|p\d|photo|image|wp)[_\-\s]?\d", re.IGNORECASE)
+# Имена камер и телефонов (DSC_0042, IMG_8921, IMG_BB_043972, IMG_AA_000414, IMG_20240501_101010):
+# признак того, что файл не переименован.
+_CAMERA_NAME_RE = re.compile(r"^(dsc|dscn|dcim|img|pxl|p\d|photo|image|wp)([_\-\s]*[a-z]{1,4})?[_\-\s]*\d",
+                             re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,26 @@ class ParsedName:
 def normalize_text(text: str) -> str:
     """NFC и схлопывание пробелов. Регистр сохраняется."""
     return " ".join(unicodedata.normalize("NFC", text).split())
+
+
+def is_camera_name(filename: str) -> bool:
+    return bool(_CAMERA_NAME_RE.match(normalize_text(filename)))
+
+
+def is_template_name(filename: str) -> bool:
+    """Имя уже в формате «Категория [N] [фото K]» (записано канонически, не имя камеры)."""
+    if is_camera_name(filename):
+        return False
+    stem = unicodedata.normalize("NFC", os.path.splitext(filename)[0])
+    parsed = parse_name(filename)
+    if not re.search(r"[^\W\d_]{2}", parsed.category):  # в категории должно быть слово
+        return False
+    parts = [parsed.category]
+    if parsed.instance is not None:
+        parts.append(str(parsed.instance))
+    if parsed.side is not None:
+        parts.append("%s %d" % (parsed.side_word, parsed.side))
+    return " ".join(parts) == stem
 
 
 def category_key(category: str) -> str:
@@ -134,7 +156,7 @@ def build_reference(folder: str, filenames: List[str], excluded: Optional[List[s
         categories[key] = _build_category(group, warnings)
 
     for photo in photos:
-        if _CAMERA_NAME_RE.match(photo.filename):
+        if is_camera_name(photo.filename):
             warnings.append("«%s»: похоже, файл не переименован (имя камеры)" % photo.filename)
     if not photos:
         warnings.append("В эталонной папке нет ни одного фото .jpg")

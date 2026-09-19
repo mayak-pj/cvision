@@ -232,3 +232,8 @@ def test_extended_path_local_and_unc():
 def test_io_path_noop_on_posix(monkeypatch):
     monkeypatch.setattr(scanner.os, "name", "posix")
     assert scanner.io_path("/x" * 200) == "/x" * 200
+
+
+@pytest.mark.parametrize("name", ["a.tif", "b.TIFF", "c.tiff", "d.jpeg", "e.JPEG", "f.png"])
+def test_other_image_formats_are_ignored(name):
+    assert not is_jpg_name(name)

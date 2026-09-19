@@ -160,8 +160,12 @@ class ReferenceModel:
         return adapted
 
     @classmethod
-    def build(cls, reference: Reference, extractor: feat.FeatureExtractor, on_progress=None) -> "ReferenceModel":
-        features, errors = feat.extract_many(extractor, [p.path for p in reference.photos], on_progress)
+    def build(cls, reference: Reference, extractor: feat.FeatureExtractor, on_progress=None,
+              feature_source=None) -> "ReferenceModel":
+        """feature_source(extractor, paths, on_progress) → (features, errors); по умолчанию — чтение
+        без кэша (features.extract_many), в программе — PhotoCache.extract_many."""
+        feature_source = feature_source or feat.extract_many
+        features, errors = feature_source(extractor, [p.path for p in reference.photos], on_progress)
         model = cls(reference, extractor, features)
         model.warnings[:0] = ["Эталонное фото не прочитано: %s (%s)" % (e.path, e.reason) for e in errors]
         return model
@@ -238,13 +242,15 @@ def match_folder(
     filenames: Sequence[str],
     config: Optional[MatchConfig] = None,
     on_progress=None,
+    feature_source=None,
 ) -> FolderMatch:
     """Полное сопоставление папки: чтение признаков (кроме уже переименованных фото) и назначение."""
     config = config or MatchConfig()
     fixed = {i: detect_already_named(model.reference, name) for i, name in enumerate(filenames)}
     to_read = [i for i, v in fixed.items() if v is None]
-    features, errors = feat.extract_many(model.extractor, [os.path.join(folder, filenames[i]) for i in to_read],
-                                         on_progress)
+    feature_source = feature_source or feat.extract_many
+    features, errors = feature_source(model.extractor, [os.path.join(folder, filenames[i]) for i in to_read],
+                                      on_progress)
     feature_list: List[Optional[feat.Features]] = [None] * len(filenames)
     for i, f in zip(to_read, features):
         feature_list[i] = f

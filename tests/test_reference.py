@@ -151,3 +151,28 @@ def test_ref_photo_defaults():
     photo = ref.photos[0]
     assert photo.parsed == ParsedName("Кулер", None, None)
     assert (photo.instance, photo.side) == (1, 1)
+
+
+@pytest.mark.parametrize("name", ["DSC_0042.JPG", "IMG_8921.JPG", "IMG_BB_043972.JPG", "IMG_AA_000414.JPG",
+                                  "IMG_20240501_101010.jpg", "P1010001.JPG", "dscn1234.jpg"])
+def test_camera_names(name):
+    from photo_renamer.reference import is_camera_name, is_template_name
+
+    assert is_camera_name(name)
+    assert not is_template_name(name)
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("Процессор 1 фото 2.JPG", True),
+    ("Кулер.jpg", True),
+    ("Кулер 2.jpg", True),
+    ("Материнская плата фото 1.jpg", True),
+    ("Кабель miniSAS.JPG", True),
+    ("Процессор  1 фото 2.jpg", False),   # двойной пробел — не каноническая запись
+    ("12.jpg", False),
+    ("IMG_BB_043972.JPG", False),
+])
+def test_template_names(name, expected):
+    from photo_renamer.reference import is_template_name
+
+    assert is_template_name(name) is expected

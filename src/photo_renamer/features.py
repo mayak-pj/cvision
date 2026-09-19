@@ -62,6 +62,19 @@ class Features:
     hog: np.ndarray
 
 
+# Размер, до которого фото декодируется при чтении: хватает и для признаков (256 px),
+# и для миниатюры в редакторе эталона (до 400 px). Для фото 6000×4000 draft() даёт 750×500.
+DECODE_SIZE = 400
+FEATURE_VERSION = "2"  # увеличить при изменении способа расчёта признаков (сбрасывает кэш признаков)
+
+
+def fit(img: Image.Image, size: int) -> Image.Image:
+    """Копия изображения, у которой большая сторона не больше size."""
+    out = img.copy()
+    out.thumbnail((size, size), Image.LANCZOS)
+    return out
+
+
 def load_image(path: str, work_size: int = 256) -> Image.Image:
     """Читает JPEG и возвращает RGB-изображение, у которого большая сторона не больше work_size.
 
@@ -244,7 +257,18 @@ class FeatureExtractor:
         )
 
     def from_file(self, path: str) -> Features:
-        return self.from_image(load_image(path, self.work_size))
+        return self.from_loaded(load_image(path, max(self.work_size, DECODE_SIZE)))
+
+    def from_loaded(self, img: Image.Image) -> Features:
+        """Признаки из изображения, прочитанного load_image(path, DECODE_SIZE).
+        Единая точка для обычного чтения и для кэша: признаки получаются одинаковыми."""
+        return self.from_image(fit(img, self.work_size))
+
+    def version(self) -> str:
+        """Строка, однозначно описывающая способ расчёта признаков (ключ кэша признаков)."""
+        return "v%s|%d|%d|%s|%d|%d|%d|%g|%d" % (
+            FEATURE_VERSION, self.work_size, self.hash_size, ",".join(map(str, self.hist_bins)), self.rotations,
+            self.grid, self.tiny_size, self.background_threshold, int(self.white_balance))
 
     def distance_components(self, a: Sequence[Features], b: Sequence[Features]) -> Dict[str, np.ndarray]:
         """Матрицы расстояний формы (len(a), len(b)) по каждому признаку.

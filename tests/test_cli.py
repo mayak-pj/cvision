@@ -28,6 +28,7 @@ def project(tmp_path):
 def config(tmp_path):
     c = cfg.AppConfig()
     c.logs_dir = str(tmp_path / "logs")
+    c.cache_dir = str(tmp_path / "cache")
     return c
 
 

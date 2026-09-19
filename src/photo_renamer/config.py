@@ -30,6 +30,13 @@ class AppConfig:
     sort: str = SORT_BY_NAME
     problem_categories: List[str] = field(default_factory=list)
     logs_dir: str = "logs"
+    cache_dir: str = "cache"
+    cache_max_mb: float = 2048
+    group_threshold: float = 0.30
+
+    def cache_path(self) -> str:
+        folder = self.cache_dir if os.path.isabs(self.cache_dir) else os.path.join(APP_DIR, self.cache_dir)
+        return os.path.join(folder, "photos.sqlite")
 
     def extractor(self) -> FeatureExtractor:
         return FeatureExtractor(self.work_size, self.hash_size, self.hist_bins, self.rotations,
@@ -102,6 +109,9 @@ _APP_KEYS = {
     "sort": lambda v: None if v in (SORT_BY_NAME, SORT_BY_EXIF) else "допустимо \"name\" или \"exif\"",
     "problem_categories": _check_str_list,
     "logs_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
+    "cache_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
+    "cache_max_mb": _number(50, 1024 * 1024),
+    "group_threshold": _number(0.01, 1.0),
 }
 
 
