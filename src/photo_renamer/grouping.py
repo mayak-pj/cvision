@@ -19,7 +19,7 @@ from scipy.spatial.distance import squareform
 
 from . import features as feat
 from .reference import category_key, is_template_name, parse_name
-from .scanner import FolderScan, ScanError, find_photo_folders
+from .scanner import FolderScan, ScanError, find_photo_folders, list_photos
 
 REFERENCE_SHARE = 0.9       # доля фото с именами по шаблону, чтобы папка считалась эталоном
 REFERENCE_MIN_CATEGORIES = 3  # ...и разных категорий не меньше этого (и не меньше 5% от числа фото):
@@ -52,6 +52,7 @@ class FolderGroup:
     folders: List[FolderInfo]
     reference: FolderInfo              # предлагаемый эталон группы
     reference_is_ready: bool           # эталон уже переименован по шаблону
+    reference_manual: bool = False     # эталон выбран пользователем (не менять автоматически)
 
     @property
     def targets(self) -> List[FolderInfo]:
@@ -152,6 +153,93 @@ def analyze_project(
     distances = folder_distances(folder_features, extractor, weights)
     groups = make_groups(folders, cluster(distances, threshold))
     return ProjectAnalysis(", ".join(roots), folders, groups, distances, errors)
+
+
+# --- правка групп пользователем -------------------------------------------------------------
+
+SIMILARITY_HIGH = 0.25   # несходство с эталоном группы: до этого — «высокое» сходство
+SIMILARITY_MEDIUM = 0.30  # до этого — «среднее», дальше — «низкое» (порог группировки)
+
+
+def _pick_reference(group: FolderGroup) -> None:
+    """Выбирает эталон группы, если пользователь не выбрал его сам (или выбранный ушёл из группы)."""
+    if group.reference_manual and group.reference in group.folders:
+        group.reference_is_ready = group.reference.is_reference
+        return
+    group.reference_manual = False
+    ready = [f for f in group.folders if f.is_reference]
+    if ready:
+        group.reference = max(ready, key=lambda f: (f.named_share, f.count))
+    else:
+        group.reference = max(group.folders, key=lambda f: f.count)
+    group.reference_is_ready = bool(ready)
+
+
+def group_of(analysis: ProjectAnalysis, folder: FolderInfo) -> int:
+    for k, g in enumerate(analysis.groups):
+        if any(f is folder for f in g.folders):
+            return k
+    raise ValueError("папка не входит ни в одну группу")
+
+
+def move_folder(analysis: ProjectAnalysis, folder: FolderInfo, target: Optional[int]) -> int:
+    """Переносит папку в группу target (None — в новую группу). Пустые группы удаляются.
+    Возвращает номер группы, в которой оказалась папка."""
+    source = analysis.groups[group_of(analysis, folder)]
+    if target is not None and analysis.groups[target] is source:
+        return target
+    source.folders = [f for f in source.folders if f is not folder]
+    if target is None:
+        destination = FolderGroup([folder], folder, folder.is_reference)
+        analysis.groups.append(destination)
+    else:
+        destination = analysis.groups[target]
+        destination.folders.append(folder)
+        destination.folders.sort(key=lambda f: analysis.folders.index(f))
+    if source.folders:
+        _pick_reference(source)
+    else:
+        analysis.groups.remove(source)
+    _pick_reference(destination)
+    return analysis.groups.index(destination)
+
+
+def set_reference(analysis: ProjectAnalysis, folder: FolderInfo) -> None:
+    """Пользователь выбрал эталон группы."""
+    group = analysis.groups[group_of(analysis, folder)]
+    group.reference = folder
+    group.reference_manual = True
+    group.reference_is_ready = folder.is_reference
+
+
+def refresh_names(analysis: ProjectAnalysis, sort: str = "name") -> None:
+    """Перечитывает имена файлов (не сами фото) — например, после создания эталона в редакторе."""
+    for k, info in enumerate(analysis.folders):
+        try:
+            fresh = folder_info(list_photos(info.path, sort=sort))
+        except OSError:
+            continue
+        info.scan, info.named_share, info.categories = fresh.scan, fresh.named_share, fresh.categories
+    for group in analysis.groups:
+        _pick_reference(group)
+
+
+def similarity_to_reference(analysis: ProjectAnalysis, folder: FolderInfo) -> Optional[float]:
+    """Несходство папки с эталоном её группы (None для самого эталона)."""
+    group = analysis.groups[group_of(analysis, folder)]
+    if group.reference is folder:
+        return None
+    return float(analysis.distances[analysis.folders.index(folder), analysis.folders.index(group.reference)])
+
+
+def similarity_label(distance: Optional[float]) -> str:
+    if distance is None:
+        return ""
+    if distance <= SIMILARITY_HIGH:
+        return "высокое"
+    if distance <= SIMILARITY_MEDIUM:
+        return "среднее"
+    return "низкое"
 
 
 def describe(analysis: ProjectAnalysis) -> str:

@@ -73,3 +73,51 @@ def test_generic_numbering_is_not_a_reference():
     real = grouping.folder_info(FolderScan("/y", ["Кулер.JPG", "Процессор 1 фото 1.JPG", "Процессор 1 фото 2.JPG",
                                                   "Кабель HDMI.JPG"]))
     assert real.is_reference
+
+
+def _fake_analysis(tmp_path):
+    """Анализ без фото: три папки, две группы, заданная матрица несходства."""
+    from photo_renamer.scanner import FolderScan
+
+    infos = []
+    for name, photos in [("A", ["IMG_%d.JPG" % i for i in range(5)]),
+                         ("B", ["IMG_%d.JPG" % i for i in range(7)]),
+                         ("C", ["IMG_%d.JPG" % i for i in range(3)])]:
+        infos.append(grouping.folder_info(FolderScan(str(tmp_path / name), photos)))
+    d = np.array([[0, .2, .5], [.2, 0, .5], [.5, .5, 0]])
+    groups = grouping.make_groups(infos, grouping.cluster(d, 0.3))
+    return grouping.ProjectAnalysis(str(tmp_path), infos, groups, d), infos
+
+
+def test_move_folder_and_references(tmp_path):
+    analysis, (a, b, c) = _fake_analysis(tmp_path)
+    assert [len(g.folders) for g in analysis.groups] == [2, 1]
+    assert analysis.groups[0].reference is b                     # больше всего фото
+    assert grouping.similarity_label(grouping.similarity_to_reference(analysis, a)) == "высокое"
+    assert grouping.similarity_to_reference(analysis, b) is None
+
+    grouping.set_reference(analysis, a)
+    assert analysis.groups[0].reference is a and analysis.groups[0].reference_manual
+
+    k = grouping.move_folder(analysis, c, 0)                     # C в первую группу
+    assert k == 0 and len(analysis.groups) == 1                  # вторая группа опустела и удалена
+    assert analysis.groups[0].reference is a                     # ручной выбор сохранился
+    assert grouping.similarity_label(grouping.similarity_to_reference(analysis, c)) == "низкое"
+
+    k = grouping.move_folder(analysis, a, None)                  # эталон ушёл в новую группу
+    assert k == 1 and analysis.groups[1].folders == [a]
+    assert analysis.groups[0].reference is b and not analysis.groups[0].reference_manual
+
+
+def test_refresh_names_after_reference_created(tmp_path):
+    shoot(tmp_path / "SN1", [1, 2, 3, 4])
+    shoot(tmp_path / "SN2", [1, 2, 3, 4, 5])
+    analysis = grouping.analyze_project([str(tmp_path)], FeatureExtractor(), W)
+    group = analysis.groups[0]
+    assert len(analysis.groups) == 1 and not group.reference_is_ready
+    folder = group.reference
+    new_names = ["Кулер.JPG", "Процессор 1 фото 1.JPG", "Процессор 1 фото 2.JPG", "Кабель HDMI.JPG", "Радиатор.JPG"]
+    for old, new in zip(sorted(os.listdir(folder.path)), new_names):
+        os.rename(os.path.join(folder.path, old), os.path.join(folder.path, new))
+    grouping.refresh_names(analysis)
+    assert group.reference is folder and group.reference_is_ready
