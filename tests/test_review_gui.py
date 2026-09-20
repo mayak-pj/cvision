@@ -119,3 +119,24 @@ def test_skip_folder_finishes(batch):
     win.skip_folder()
     assert win.header_var.get() == "Готово"
     assert str(win.apply_btn["state"]) == "disabled"
+
+
+def test_only_doubtful_filter(batch):
+    win, _ = batch
+    from photo_renamer import matcher
+
+    total = len(win.tree.get_children())
+    win.match.photos[2].status = matcher.STATUS_CHECK      # программа не уверена в имени
+    win.render_rows()
+    assert len(win.tree.get_children()) == total           # фильтр выключен — видно всё
+    assert "проверить: 1" in win.status_var.get()
+
+    win.only_doubtful.set(True)
+    win.render_rows()
+    rows_left = win.tree.get_children()
+    assert len(rows_left) == 1
+    assert win.tree.item(rows_left[0], "values")[2] == "ПРОВЕРЬТЕ"
+
+    win.only_doubtful.set(False)
+    win.render_rows()
+    assert len(win.tree.get_children()) == total

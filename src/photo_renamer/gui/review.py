@@ -22,6 +22,7 @@ ROW_THUMB = 56
 STATUS_TEXT = {
     matcher.STATUS_OK: "распознано",
     matcher.STATUS_SIDE_RULE: "по правилу сторон",
+    matcher.STATUS_CHECK: "ПРОВЕРЬТЕ",
     matcher.STATUS_MANUAL: "выбрано вручную",
     matcher.STATUS_ALREADY_NAMED: "уже названо",
     matcher.STATUS_LOW_CONFIDENCE: "НЕ УВЕРЕНА",
@@ -102,6 +103,9 @@ class BatchWindow(tk.Toplevel):
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
         ttk.Label(side, text="Выбранные фото").pack(anchor="w")
+        self.only_doubtful = tk.BooleanVar(value=False)
+        ttk.Checkbutton(side, text="Показать только требующие проверки", variable=self.only_doubtful,
+                        command=self.render_rows).pack(anchor="w", pady=(0, 6))
         self.candidates_frame = ttk.Frame(side)
         self.candidates_frame.pack(fill="x", pady=(4, 8))
         ttk.Label(side, text="Категория из эталона:").pack(anchor="w")
@@ -204,9 +208,12 @@ class BatchWindow(tk.Toplevel):
         self.tree.delete(*self.tree.get_children())
         self._row_index.clear()
         for photo in self.match.photos:
+            if self.only_doubtful.get() and not self._is_doubtful(photo):
+                continue
             new = photo.new_name or ("" if photo.identified else "— не переименовывать —")
             tags = []
-            if photo.status in (matcher.STATUS_LOW_CONFIDENCE, matcher.STATUS_NO_MATCH, matcher.STATUS_SIDE_RULE):
+            if photo.status in (matcher.STATUS_LOW_CONFIDENCE, matcher.STATUS_NO_MATCH, matcher.STATUS_SIDE_RULE,
+                                matcher.STATUS_CHECK):
                 tags.append("doubt")
             elif photo.status == matcher.STATUS_MANUAL:
                 tags.append("manual")
@@ -220,11 +227,22 @@ class BatchWindow(tk.Toplevel):
                 self.tree.selection_add(iid)
         self._update_counts()
 
+    @staticmethod
+    def _is_doubtful(photo) -> bool:
+        return photo.status in (matcher.STATUS_CHECK, matcher.STATUS_LOW_CONFIDENCE, matcher.STATUS_NO_MATCH,
+                                matcher.STATUS_SIDE_RULE, matcher.STATUS_UNREADABLE)
+
     def _update_counts(self) -> None:
         total = len(self.match.photos)
         rename = sum(1 for p in self.match.photos if p.new_name)
         unknown = len(self.match.unidentified())
-        self.status_var.set("Фото: %d, будет переименовано: %d, не опознано: %d" % (total, rename, unknown))
+        check = sum(1 for p in self.match.photos if self._is_doubtful(p))
+        text = "Фото: %d, будет переименовано: %d, проверить: %d" % (total, rename, check)
+        if unknown:
+            text += ", не опознано: %d" % unknown
+        if self.match.strict:
+            text += "   (состав совпадает с эталоном: имя предложено каждому фото)"
+        self.status_var.set(text)
 
     def load_thumbnails(self) -> None:
         """Подгружает миниатюры по одной, не блокируя окно."""

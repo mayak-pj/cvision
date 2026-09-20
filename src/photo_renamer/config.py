@@ -102,6 +102,8 @@ _MATCH_KEYS = {
     "side_fill_max_distance": _number(0, 1.0),
     "side_fill_top_k": _number(1, 10, integer=True),
     "weights": _check_weights,
+    "sequence_weight": _number(0, 3),
+    "strict_counts": lambda v: None if isinstance(v, bool) or v == "auto" else "допустимо true, false или \"auto\"",
     "adapt_power": _number(0, 16),
 }
 _APP_KEYS = {

@@ -50,3 +50,21 @@ def test_plan_and_result_sections():
     assert "DSC_0001.JPG → Кулер.JPG  (97%)" in format_report(report, plan)
     plan.items[0].result = oplog.RESULT_OK
     assert "переименовано 1, пропущено 0, ошибок 0" in format_report(report, plan, applied=True)
+
+
+def test_check_section_in_strict_mode():
+    from photo_renamer.matcher import MatchConfig
+
+    rows = [
+        {"Процессор": 0.10}, {"Процессор": 0.12},
+        {"Оперативная память": 0.10}, {"Оперативная память": 0.11},
+        {"Оперативная память": 0.12}, {"Оперативная память": 0.13},
+        {"Кулер": 0.10}, {"Кабель HDMI": 0.10},
+        {"Кабель DP": 0.30, "Кабель DP-miniDP": 0.30},
+        {"Кабель DP": 0.30, "Кабель DP-miniDP": 0.30},
+    ]
+    match = run_match(rows, config=MatchConfig(strict_counts=True, min_confidence=90))
+    report = build_report(match)
+    assert report.to_check and report.identified == 10
+    text = format_report(report)
+    assert "Проверьте имена (низкая уверенность)" in text

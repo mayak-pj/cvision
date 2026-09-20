@@ -33,6 +33,7 @@ from .reference import Category, Reference, category_key, parse_name
 
 STATUS_OK = "ok"                        # распознано уверенно
 STATUS_SIDE_RULE = "side_rule"          # отнесено к категории по правилу сторон
+STATUS_CHECK = "check"                  # имя предложено, но уверенность низкая — проверьте
 STATUS_MANUAL = "manual"                # категория задана пользователем
 STATUS_ALREADY_NAMED = "already_named"  # имя уже в формате эталона, не трогаем
 STATUS_LOW_CONFIDENCE = "low_confidence"
@@ -40,7 +41,7 @@ STATUS_NO_MATCH = "no_match"
 STATUS_EXCLUDED = "excluded"            # пользователь запретил переименование
 STATUS_UNREADABLE = "unreadable"
 
-IDENTIFIED = (STATUS_OK, STATUS_SIDE_RULE, STATUS_MANUAL, STATUS_ALREADY_NAMED)
+IDENTIFIED = (STATUS_OK, STATUS_SIDE_RULE, STATUS_CHECK, STATUS_MANUAL, STATUS_ALREADY_NAMED)
 
 
 @dataclass
@@ -50,6 +51,12 @@ class MatchConfig:
     # Подстройка весов под освещение папки: вес признака делится на (рост расстояний)^adapt_power.
     # 0 — не подстраивать.
     adapt_power: float = 4.0
+    # Учёт порядка съёмки: к расстоянию фото добавляется доля расстояния лучшего из соседей.
+    # Одинаковые детали снимают подряд, поэтому соседи подсказывают категорию. 0 — не учитывать.
+    sequence_weight: float = 0.5
+    # Строгий режим: у категорий ровно столько мест, сколько фото в эталоне, лишних мест нет.
+    # "auto" — включается, когда число фото в папке совпадает с эталоном; True/False — принудительно.
+    strict_counts: object = "auto"
     max_distance: float = 0.40          # дальше этого расстояния фото не относится ни к одной категории
     extra_penalty: float = 0.05         # штраф за экземпляр сверх количества в эталоне
     temperature: float = 0.05           # «резкость» % уверенности
@@ -207,6 +214,7 @@ class FolderMatch:
     side_dist: np.ndarray
     feature_row: Dict[int, int]  # индекс фото → строка в cat_dist/side_dist
     warnings: List[str] = field(default_factory=list)
+    strict: bool = False         # применён строгий режим (состав совпадает с эталоном)
     weights_used: Dict[str, float] = field(default_factory=dict)  # веса после подстройки под папку
 
     def category_counts(self) -> Dict[str, int]:
@@ -304,6 +312,16 @@ def _occupied_capacity(model: ReferenceModel, fixed: Dict[int, Tuple[Category, i
     return used
 
 
+def apply_sequence_prior(cat_dist: np.ndarray, weight: float) -> np.ndarray:
+    """Учитывает порядок съёмки: к расстоянию каждого фото добавляется доля расстояния
+    лучшего из соседей по папке. Одиночная ошибка внутри серии одинаковых деталей исправляется."""
+    if weight <= 0 or len(cat_dist) < 2:
+        return cat_dist
+    padded = np.vstack([cat_dist[:1], cat_dist, cat_dist[-1:]])
+    # делим на (1 + вес): шкала расстояний сохраняется, пороги и % уверенности не «плывут»
+    return (cat_dist + weight * np.minimum(padded[:-2], padded[2:])) / (1.0 + weight)
+
+
 def _confidences(cat_dist_row: np.ndarray, config: MatchConfig) -> np.ndarray:
     """% уверенности по категориям: softmax(-d/T) с псевдокатегорией «неопознано» на расстоянии max_distance."""
     logits = -np.append(cat_dist_row, config.max_distance) / config.temperature
@@ -312,21 +330,35 @@ def _confidences(cat_dist_row: np.ndarray, config: MatchConfig) -> np.ndarray:
     return 100.0 * p[:-1] / p.sum()
 
 
+def use_strict_counts(config: MatchConfig, model: "ReferenceModel", n_photos: int, used: int = 0) -> bool:
+    """Строгий режим: совпадает ли число фото в папке с числом фото в эталоне."""
+    if config.strict_counts is not True and config.strict_counts != "auto":
+        return False
+    if config.strict_counts is True:
+        return True
+    return n_photos + used == int(model.capacity.sum())
+
+
 def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -> None:
     model, config = result.model, result.config
-    cat_dist = result.cat_dist
+    cat_dist = apply_sequence_prior(result.cat_dist, config.sequence_weight)
     n, n_cat = cat_dist.shape
+    strict = use_strict_counts(config, model, n, int(used.sum()))
+    result.strict = strict
 
     base_cap = np.maximum(model.capacity - used, 0)
-    extra_cap = np.full(n_cat, n)  # лишних экземпляров может быть сколько угодно (со штрафом)
+    # в строгом режиме лишних мест нет: состав папки считается таким же, как в эталоне
+    extra_cap = np.zeros(n_cat, dtype=int) if strict else np.full(n_cat, n)
     col_cat = np.concatenate([np.repeat(np.arange(n_cat), base_cap), np.repeat(np.arange(n_cat), extra_cap)])
     col_cost = np.concatenate([np.zeros(base_cap.sum()), np.full(extra_cap.sum(), config.extra_penalty)])
     # max_distance — строгая граница: дальше неё категория запрещена. «Неопознано» стоит
     # max_distance + штраф, поэтому фото в пределах границы всегда получает категорию,
     # хотя бы как лишний экземпляр. Штраф влияет только на выбор между категориями.
-    dist = np.where(cat_dist <= config.max_distance, cat_dist, np.inf)
+    limit = np.inf if strict else config.max_distance
+    dist = np.where(cat_dist <= limit, cat_dist, np.inf)
     cost = dist[:, col_cat] + col_cost[None, :]
-    cost = np.hstack([cost, np.full((n, n), config.max_distance + config.extra_penalty)])
+    unmatched = 1e5 if strict else (config.max_distance + config.extra_penalty)
+    cost = np.hstack([cost, np.full((n, n), unmatched)])
     cost = np.where(np.isfinite(cost), cost, 1e6)
 
     row_ind, col_ind = linear_sum_assignment(cost)
@@ -352,6 +384,13 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
             continue
         photo.confidence = float(conf[c])
         photo.distance = float(cat_dist[r, c])
+        if strict:
+            # состав совпадает с эталоном: имя предлагается всегда, сомнительные видны в предпросмотре
+            photo.status = STATUS_OK if photo.confidence >= config.min_confidence else STATUS_CHECK
+            photo.category = model.categories[c]
+            if photo.status == STATUS_CHECK:
+                photo.note = "низкая уверенность (%.0f%%) — проверьте имя" % photo.confidence
+            continue
         if photo.confidence < config.min_confidence:
             photo.status = STATUS_LOW_CONFIDENCE
             photo.note = "низкая уверенность (%.0f%%)" % photo.confidence

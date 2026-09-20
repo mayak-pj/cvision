@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from . import oplog
-from .matcher import STATUS_ALREADY_NAMED, FolderMatch, PhotoMatch
+from .matcher import STATUS_ALREADY_NAMED, STATUS_CHECK, FolderMatch, PhotoMatch
 from .reference import category_key
 from .renamer import RenamePlan
 
@@ -27,6 +27,7 @@ class FolderReport:
     missing: List[CategoryDiff]
     extra: List[CategoryDiff]
     unidentified: List[PhotoMatch]
+    to_check: List[PhotoMatch]           # имя предложено, но уверенность низкая
     problem_categories: List[str]        # проблемные категории, которые не удалось распознать
     warnings: List[str] = field(default_factory=list)
 
@@ -72,6 +73,7 @@ def build_report(match: FolderMatch, excluded: int = 0, problem_categories: Opti
         missing=missing,
         extra=extra,
         unidentified=unidentified,
+        to_check=[p for p in match.photos if p.status == STATUS_CHECK],
         problem_categories=involved,
         warnings=list(match.warnings),
     )
@@ -102,6 +104,10 @@ def format_report(report: FolderReport, plan: Optional[RenamePlan] = None, appli
         for d in report.extra:
             lines.append("  лишние:     %s — %d при %d в эталоне" % (d.name, d.actual, d.expected))
 
+    if report.to_check:
+        lines.append("Проверьте имена (низкая уверенность), %d:" % len(report.to_check))
+        for p in report.to_check:
+            lines.append("  %s → %s — %s" % (p.filename, p.new_name or "", _candidates(p)))
     if report.unidentified:
         lines.append("Неопознанные фото (%d), имена не изменены:" % len(report.unidentified))
         for p in report.unidentified:

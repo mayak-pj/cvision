@@ -5,6 +5,7 @@ import pytest
 
 from photo_renamer.matcher import (
     STATUS_ALREADY_NAMED,
+    STATUS_CHECK,
     STATUS_EXCLUDED,
     STATUS_LOW_CONFIDENCE,
     STATUS_MANUAL,
@@ -59,6 +60,8 @@ class FakeModel(ReferenceModel):
 
 
 def run(rows, names=None, side_rows=None, config=None, unreadable=(), ref_names=REF):
+    # по умолчанию проверяем обычный режим: строгий (состав как в эталоне) — отдельными тестами
+    config = config or MatchConfig(strict_counts=False)
     names = names or ["DSC_%04d.JPG" % (i + 1) for i in range(len(rows))]
     model = FakeModel(rows, side_rows, ref_names)
     feats = [None if i in unreadable else i for i in range(len(rows))]
@@ -66,7 +69,7 @@ def run(rows, names=None, side_rows=None, config=None, unreadable=(), ref_names=
     fixed = {i: v for i, v in fixed.items() if v is not None}
     for i in fixed:
         feats[i] = None
-    return match_features(model, "/target", names, feats, config or MatchConfig(), fixed=fixed,
+    return match_features(model, "/target", names, feats, config, fixed=fixed,
                           unreadable={i: "битый файл" for i in unreadable})
 
 
@@ -149,10 +152,18 @@ def test_confidence_threshold_is_configurable():
     assert run(rows, config=MatchConfig(min_confidence=40)).photos[0].status == STATUS_OK
 
 
-def test_side_rule_completes_pair():
-    # вторая сторона памяти похожа слабо (дальше max_distance 0.40, ближе side_fill 0.50), но идёт сразу после первой
+def test_sequence_prior_rescues_weak_side():
+    """Учёт порядка съёмки: слабо похожая вторая сторона опознаётся благодаря соседу."""
     rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.45}, {"Кулер": 0.08}]
     result = run(rows)
+    assert result.photos[1].status == STATUS_OK
+    assert new_names(result)[1] == "Оперативная память 1 фото 2.JPG"
+
+
+def test_side_rule_completes_pair():
+    # без учёта соседей: вторая сторона дальше max_distance 0.40, но ближе side_fill 0.50
+    rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.45}, {"Кулер": 0.08}]
+    result = run(rows, config=MatchConfig(strict_counts=False, sequence_weight=0))
     assert result.photos[1].status == STATUS_SIDE_RULE
     assert new_names(result) == [
         "Оперативная память 1 фото 1.JPG",
@@ -164,7 +175,7 @@ def test_side_rule_completes_pair():
 
 def test_side_rule_does_not_take_dissimilar_or_identified_neighbors():
     rows = [{"Оперативная память": 0.10}, {"Кулер": 0.08}, {"Процессор": 0.10}, {}]
-    result = run(rows)
+    result = run(rows, config=MatchConfig(strict_counts=False, sequence_weight=0))
     assert result.photos[1].category.name == "Кулер"
     assert result.photos[3].status == STATUS_NO_MATCH  # FAR > side_fill_max_distance
     assert any("Неполный комплект сторон: Оперативная память 1" in w for w in result.warnings)
@@ -265,3 +276,43 @@ def test_empty_folder_and_all_fixed():
     assert run([]).photos == []
     result = run([{}], names=["Кулер.jpg"])
     assert result.photos[0].status == STATUS_ALREADY_NAMED
+
+
+def test_strict_counts_when_folder_matches_reference():
+    """Состав совпадает с эталоном: мест ровно столько, сколько фото в эталоне, имя даётся каждому фото."""
+    rows = [
+        {"Процессор": 0.10}, {"Процессор": 0.12},
+        {"Оперативная память": 0.10}, {"Оперативная память": 0.11},
+        {"Оперативная память": 0.12}, {"Оперативная память": 0.13},
+        {"Кулер": 0.10}, {"Кабель HDMI": 0.10},
+        {"Кабель DP": 0.20, "Кабель DP-miniDP": 0.22},   # оба кабеля похожи на DP
+        {"Кабель DP": 0.21, "Кабель DP-miniDP": 0.45},
+    ]
+    result = run(rows, config=MatchConfig(strict_counts="auto"))
+    assert result.strict
+    assert all(p.identified for p in result.photos)
+    # каждой категории досталось ровно столько фото, сколько в эталоне
+    assert result.category_counts() == {"Процессор": 2, "Оперативная память": 4, "Кулер": 1,
+                                        "Кабель HDMI": 1, "Кабель DP": 1, "Кабель DP-miniDP": 1}
+    assert [p.category.name for p in result.photos[8:]] == ["Кабель DP-miniDP", "Кабель DP"]
+
+
+def test_strict_counts_off_when_folder_differs():
+    rows = [{"Кулер": 0.10}, {"Кабель HDMI": 0.10}]      # фото меньше, чем в эталоне
+    result = run(rows, config=MatchConfig(strict_counts="auto"))
+    assert not result.strict
+
+
+def test_strict_counts_marks_doubtful_photos():
+    rows = [
+        {"Процессор": 0.10}, {"Процессор": 0.12},
+        {"Оперативная память": 0.10}, {"Оперативная память": 0.11},
+        {"Оперативная память": 0.12}, {"Оперативная память": 0.13},
+        {"Кулер": 0.10}, {"Кабель HDMI": 0.10},
+        {"Кабель DP": 0.30, "Кабель DP-miniDP": 0.30},   # неоднозначно
+        {"Кабель DP": 0.30, "Кабель DP-miniDP": 0.30},
+    ]
+    result = run(rows, config=MatchConfig(strict_counts=True, min_confidence=90))
+    doubtful = [p for p in result.photos if p.status == STATUS_CHECK]
+    assert doubtful and all("проверьте" in p.note for p in doubtful)
+    assert all(p.new_name for p in result.photos)        # имя предложено всем
