@@ -15,6 +15,8 @@ from typing import Dict, List, Optional
 from .. import config as cfg
 from .. import grouping
 from ..cache import PhotoCache
+from ..names import NamesList
+from .editor import ReferenceEditor
 
 TITLE = "Переименование фото комплектующих"
 
@@ -36,6 +38,7 @@ class MainWindow(tk.Tk):
     def __init__(self, app_config: cfg.AppConfig, config_warnings: List[str] = ()):
         super().__init__()
         self.app_config = app_config
+        self.names = NamesList(app_config.names_path())
         self.analysis: Optional[grouping.ProjectAnalysis] = None
         self.project_root = ""
         self._busy = False
@@ -367,7 +370,11 @@ class MainWindow(tk.Tk):
         self.status_var.set(self._summary())
 
     def edit_reference(self) -> None:
-        messagebox.showinfo(TITLE, "Редактор эталона появится на следующем шаге разработки.", parent=self)
+        group = self._selected_group()
+        if group is None:
+            return
+        folder = self.analysis.groups[group].reference
+        ReferenceEditor(self, folder.path, self.app_config, self.names, on_done=self.refresh)
 
     def rename_group(self) -> None:
         messagebox.showinfo(TITLE, "Пакетное переименование группы появится на следующем шаге разработки.",

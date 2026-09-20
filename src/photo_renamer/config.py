@@ -31,8 +31,12 @@ class AppConfig:
     problem_categories: List[str] = field(default_factory=list)
     logs_dir: str = "logs"
     cache_dir: str = "cache"
+    names_file: str = "names.txt"
     cache_max_mb: float = 2048
     group_threshold: float = 0.30
+
+    def names_path(self) -> str:
+        return self.names_file if os.path.isabs(self.names_file) else os.path.join(APP_DIR, self.names_file)
 
     def cache_path(self) -> str:
         folder = self.cache_dir if os.path.isabs(self.cache_dir) else os.path.join(APP_DIR, self.cache_dir)
@@ -109,6 +113,7 @@ _APP_KEYS = {
     "sort": lambda v: None if v in (SORT_BY_NAME, SORT_BY_EXIF) else "допустимо \"name\" или \"exif\"",
     "problem_categories": _check_str_list,
     "logs_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
+    "names_file": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к файлу",
     "cache_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
     "cache_max_mb": _number(50, 1024 * 1024),
     "group_threshold": _number(0.01, 1.0),
