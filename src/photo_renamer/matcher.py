@@ -54,10 +54,6 @@ class MatchConfig:
     # Учёт порядка съёмки: к расстоянию фото добавляется доля расстояния лучшего из соседей.
     # Одинаковые детали снимают подряд, поэтому соседи подсказывают категорию. 0 — не учитывать.
     sequence_weight: float = 0.5
-    # Пауза между кадрами, по которой серия делится на разные детали (секунды). 0 — не делить.
-    # На размеченных данных деление по паузам не дало выигрыша ни при каком пороге,
-    # поэтому по умолчанию выключено (см. docs/decisions.md).
-    instance_gap_seconds: float = 0.0
     # Строгий режим: у категорий ровно столько мест, сколько фото в эталоне, лишних мест нет.
     # "auto" — включается, когда число фото в папке совпадает с эталоном; True/False — принудительно.
     strict_counts: object = "auto"
@@ -220,7 +216,6 @@ class FolderMatch:
     warnings: List[str] = field(default_factory=list)
     strict: bool = False         # применён строгий режим (состав совпадает с эталоном)
     weights_used: Dict[str, float] = field(default_factory=dict)  # веса после подстройки под папку
-    times: List[Optional[float]] = field(default_factory=list)      # время съёмки, с (для деления серий)
     fixed: Dict[int, tuple] = field(default_factory=dict)           # уже названные по шаблону фото
     manual: Dict[int, Optional[str]] = field(default_factory=dict)  # выбор пользователя: ключ категории или None
 
@@ -258,7 +253,6 @@ def match_folder(
     config: Optional[MatchConfig] = None,
     on_progress=None,
     feature_source=None,
-    shot_times: Optional[Sequence[Optional[float]]] = None,
 ) -> FolderMatch:
     """Полное сопоставление папки: чтение признаков (кроме уже переименованных фото) и назначение."""
     config = config or MatchConfig()
@@ -273,8 +267,7 @@ def match_folder(
     reasons = {e.path: e.reason for e in errors}
     unreadable = {i: reasons.get(os.path.join(folder, filenames[i]), "") for i in to_read if feature_list[i] is None}
     return match_features(model, folder, filenames, feature_list, config,
-                          fixed={i: v for i, v in fixed.items() if v is not None}, unreadable=unreadable,
-                          times=shot_times)
+                          fixed={i: v for i, v in fixed.items() if v is not None}, unreadable=unreadable)
 
 
 def match_features(
@@ -285,7 +278,6 @@ def match_features(
     config: Optional[MatchConfig] = None,
     fixed: Optional[Dict[int, Tuple[Category, int, int]]] = None,
     unreadable: Optional[Dict[int, str]] = None,
-    times: Optional[Sequence[Optional[float]]] = None,
 ) -> FolderMatch:
     """Сопоставление по готовым признакам. feature_list[i] = None для уже переименованных и нечитаемых."""
     config = config or MatchConfig()
@@ -306,7 +298,7 @@ def match_features(
             photos[i].note = "не удалось прочитать фото" + (": " + unreadable[i] if unreadable.get(i) else "")
 
     result = FolderMatch(folder, photos, model, config, cat_dist, side_dist, feature_row,
-                         weights_used=weights_used, fixed=dict(fixed), times=list(times or []))
+                         weights_used=weights_used, fixed=dict(fixed))
     solve(result)
     return result
 
@@ -499,42 +491,16 @@ def _complete_sides(result: FolderMatch) -> None:
                 break
 
 
-def _time_segments(result: FolderMatch, idx: List[int]) -> List[List[int]]:
-    """Делит серию по длинным паузам между кадрами: это разные детали, снятые подряд."""
-    limit = result.config.instance_gap_seconds
-    times = result.times
-    if limit <= 0 or not times:
-        return [idx]
-    segments = [[idx[0]]]
-    for previous, current in zip(idx, idx[1:]):
-        before, after = times[previous], times[current]
-        if before is not None and after is not None and after - before > limit:
-            segments.append([current])
-        else:
-            segments[-1].append(current)
-    return segments
-
-
 def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[int]]:
-    """Делит серию на экземпляры по cat.sides фото. Сначала серия режется по длинным паузам
-    (разные детали), затем каждый кусок — по числу сторон. Неполный экземпляр ставится
-    в начало или конец, смотря что лучше согласуется с расстояниями до сторон эталона."""
+    """Делит серию на экземпляры по cat.sides фото. Неполный экземпляр ставится в начало или конец,
+    смотря что лучше согласуется с расстояниями до конкретных сторон эталона.
+
+    Паузы между кадрами для деления намеренно не используются: между разными деталями пауза
+    бывает такой же короткой, как между сторонами одной детали.
+    """
     sides = cat.sides
     if sides == 1:
         return [[i] for i in idx]
-    segments = _time_segments(result, idx)
-    if len(segments) > 1:
-        out = []
-        for segment in segments:
-            out.extend(_split_run_by_sides(result, cat, segment))
-        return out
-    return _split_run_by_sides(result, cat, idx)
-
-
-def _split_run_by_sides(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[int]]:
-    sides = cat.sides
-    if sides == 1 or len(idx) <= 1:
-        return [idx] if len(idx) <= 1 else [[i] for i in idx]
     full, rest = divmod(len(idx), sides)
     if rest == 0:
         return [idx[k:k + sides] for k in range(0, len(idx), sides)]

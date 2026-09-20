@@ -190,8 +190,7 @@ class BatchWindow(tk.Toplevel):
         try:
             self.match = matcher.match_folder(self.model, self.folder.path, self.folder.scan.photos,
                                              self.app_config.match, self._progress,
-                                             feature_source=self.cache.extract_many,
-                                             shot_times=self.cache.shot_seconds(self.folder.scan.photo_paths))
+                                             feature_source=self.cache.extract_many,)
         except Cancelled:
             self.close()
             return

@@ -125,17 +125,6 @@ class PhotoCache:
         self._after_write()
         return shot
 
-    def shot_seconds(self, paths: Sequence[str]) -> List[Optional[float]]:
-        """Время съёмки каждого фото в секундах (для деления серий по паузам)."""
-        out = []
-        for path in paths:
-            stamp = self.shot_time(path)
-            try:
-                out.append(time.mktime(time.strptime(stamp, "%Y:%m:%d %H:%M:%S")) if stamp else None)
-            except ValueError:
-                out.append(None)
-        return out
-
     def thumbnail(self, path: str) -> Image.Image:
         jpeg, _ = self.get(path)
         return Image.open(io.BytesIO(jpeg))

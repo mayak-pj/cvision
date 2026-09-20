@@ -143,14 +143,8 @@ def main():
             ex = feat.FeatureExtractor(white_balance=white_balance)
             ref_feats, _ = feat.extract_many(ex, [p.path for p in reference.photos])
             model = matcher.ReferenceModel(reference, ex, ref_feats)
-            from photo_renamer.cache import PhotoCache
-            photos_cache = PhotoCache(os.path.join("cache", "photos.sqlite"))
-            folders = []
-            for folder, names, truth in labels:
-                paths = [os.path.join(folder, n) for n in names]
-                folders.append((folder, names, feat.extract_many(ex, paths)[0], truth,
-                                photos_cache.shot_seconds(paths)))
-            photos_cache.close()
+            folders = [(folder, names, feat.extract_many(ex, [os.path.join(folder, n) for n in names])[0], truth)
+                       for folder, names, truth in labels]
             cache[white_balance] = (model, folders)
         return cache[white_balance]
 
@@ -158,8 +152,8 @@ def main():
         model, folders = prepared(white_balance)
         counts = Counter()
         per_folder = []
-        for folder, names, fs, truth, times in folders:
-            result = matcher.match_features(model, folder, names, fs, config, times=times)
+        for folder, names, fs, truth in folders:
+            result = matcher.match_features(model, folder, names, fs, config)
             c, wrong = score(result, truth)
             counts += c
             per_folder.append((os.path.basename(folder), c))
@@ -182,8 +176,8 @@ def main():
     # точность по именам целиком: категория + номер экземпляра + сторона
     model, prepared_folders = prepared(False)
     total_names = Counter()
-    for folder, names, fs, truth, times in prepared_folders:
-        result = matcher.match_features(model, folder, names, fs, base, times=times)
+    for folder, names, fs, truth in prepared_folders:
+        result = matcher.match_features(model, folder, names, fs, base)
         counts, wrong = score_names(result, expected_names(reference, names, truth))
         total_names += counts
         print("  имена целиком, %s: верно %d, НЕВЕРНО %d, не переименовано %d"

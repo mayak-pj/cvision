@@ -82,8 +82,7 @@ def run_batch(reference_dir: str, targets: List[str], config: cfg.AppConfig, app
         for n, scan in enumerate(scans, start=1):
             out("\nПапка %d из %d: %s" % (n, len(scans), scan.path))
             match = match_folder(model, scan.path, scan.photos, config.match, _progress("  чтение фото"),
-                                 feature_source=cache.extract_many,
-                                 shot_times=cache.shot_seconds(scan.photo_paths))
+                                 feature_source=cache.extract_many,)
             try:
                 plan = renamer.build_plan(match)
             except OSError as exc:
