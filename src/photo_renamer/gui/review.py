@@ -190,7 +190,8 @@ class BatchWindow(tk.Toplevel):
         try:
             self.match = matcher.match_folder(self.model, self.folder.path, self.folder.scan.photos,
                                              self.app_config.match, self._progress,
-                                             feature_source=self.cache.extract_many)
+                                             feature_source=self.cache.extract_many,
+                                             shot_times=self.cache.shot_seconds(self.folder.scan.photo_paths))
         except Cancelled:
             self.close()
             return
@@ -242,6 +243,8 @@ class BatchWindow(tk.Toplevel):
             text += ", не опознано: %d" % unknown
         if self.match.strict:
             text += "   (состав совпадает с эталоном: имя предложено каждому фото)"
+        if self.folder is not None and self.folder.scan.order_differs:
+            text += "   (порядок съёмки не совпадает с порядком имён — используется порядок съёмки)"
         self.status_var.set(text)
 
     def load_thumbnails(self) -> None:

@@ -209,6 +209,7 @@ class MainWindow(tk.Tk):
             self.analysis = grouping.analyze_project(
                 [root], self.app_config.extractor(), self.app_config.match.weights,
                 self.app_config.group_threshold, feature_source=cache.extract_many, sort=self.app_config.sort,
+                date_source=cache.shot_time,
                 on_folder=self._on_folder, on_progress=self._on_progress)
         except Cancelled:
             self.status_var.set("Анализ прерван.")
@@ -366,7 +367,11 @@ class MainWindow(tk.Tk):
     def refresh(self) -> None:
         if self.analysis is None:
             return
-        grouping.refresh_names(self.analysis, sort=self.app_config.sort)
+        cache = PhotoCache(self.app_config.cache_path(), self.app_config.cache_max_mb)
+        try:
+            grouping.refresh_names(self.analysis, sort=self.app_config.sort, date_source=cache.shot_time)
+        finally:
+            cache.close()
         self.render()
         self.status_var.set(self._summary())
 

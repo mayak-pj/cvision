@@ -54,6 +54,10 @@ class MatchConfig:
     # Учёт порядка съёмки: к расстоянию фото добавляется доля расстояния лучшего из соседей.
     # Одинаковые детали снимают подряд, поэтому соседи подсказывают категорию. 0 — не учитывать.
     sequence_weight: float = 0.5
+    # Пауза между кадрами, по которой серия делится на разные детали (секунды). 0 — не делить.
+    # На размеченных данных деление по паузам не дало выигрыша ни при каком пороге,
+    # поэтому по умолчанию выключено (см. docs/decisions.md).
+    instance_gap_seconds: float = 0.0
     # Строгий режим: у категорий ровно столько мест, сколько фото в эталоне, лишних мест нет.
     # "auto" — включается, когда число фото в папке совпадает с эталоном; True/False — принудительно.
     strict_counts: object = "auto"
@@ -216,6 +220,9 @@ class FolderMatch:
     warnings: List[str] = field(default_factory=list)
     strict: bool = False         # применён строгий режим (состав совпадает с эталоном)
     weights_used: Dict[str, float] = field(default_factory=dict)  # веса после подстройки под папку
+    times: List[Optional[float]] = field(default_factory=list)      # время съёмки, с (для деления серий)
+    fixed: Dict[int, tuple] = field(default_factory=dict)           # уже названные по шаблону фото
+    manual: Dict[int, Optional[str]] = field(default_factory=dict)  # выбор пользователя: ключ категории или None
 
     def category_counts(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
@@ -251,6 +258,7 @@ def match_folder(
     config: Optional[MatchConfig] = None,
     on_progress=None,
     feature_source=None,
+    shot_times: Optional[Sequence[Optional[float]]] = None,
 ) -> FolderMatch:
     """Полное сопоставление папки: чтение признаков (кроме уже переименованных фото) и назначение."""
     config = config or MatchConfig()
@@ -265,7 +273,8 @@ def match_folder(
     reasons = {e.path: e.reason for e in errors}
     unreadable = {i: reasons.get(os.path.join(folder, filenames[i]), "") for i in to_read if feature_list[i] is None}
     return match_features(model, folder, filenames, feature_list, config,
-                          fixed={i: v for i, v in fixed.items() if v is not None}, unreadable=unreadable)
+                          fixed={i: v for i, v in fixed.items() if v is not None}, unreadable=unreadable,
+                          times=shot_times)
 
 
 def match_features(
@@ -276,6 +285,7 @@ def match_features(
     config: Optional[MatchConfig] = None,
     fixed: Optional[Dict[int, Tuple[Category, int, int]]] = None,
     unreadable: Optional[Dict[int, str]] = None,
+    times: Optional[Sequence[Optional[float]]] = None,
 ) -> FolderMatch:
     """Сопоставление по готовым признакам. feature_list[i] = None для уже переименованных и нечитаемых."""
     config = config or MatchConfig()
@@ -296,17 +306,51 @@ def match_features(
             photos[i].note = "не удалось прочитать фото" + (": " + unreadable[i] if unreadable.get(i) else "")
 
     result = FolderMatch(folder, photos, model, config, cat_dist, side_dist, feature_row,
-                         weights_used=weights_used)
-    if rows and model.categories:
-        _assign_categories(result, rows, _occupied_capacity(model, fixed))
-    _complete_sides(result)
-    renumber(result)
+                         weights_used=weights_used, fixed=dict(fixed), times=list(times or []))
+    solve(result)
     return result
 
 
-def _occupied_capacity(model: ReferenceModel, fixed: Dict[int, Tuple[Category, int, int]]) -> np.ndarray:
+def solve(result: FolderMatch) -> None:
+    """Раскладывает по категориям все фото, кроме уже названных и выбранных пользователем.
+
+    Вызывается заново после каждой ручной правки: выбор пользователя занимает место своей
+    категории, поэтому исправление одного фото помогает правильно разложить остальные.
+    """
+    model = result.model
+    free = [i for i in sorted(result.feature_row) if i not in result.fixed and i not in result.manual]
+    used = _occupied_capacity(model, result.fixed.values())
+    for key in result.manual.values():
+        if key is not None and key in model.cat_index:
+            used[model.cat_index[key]] += 1
+
+    for i in free:  # состояния пересчитываются заново
+        photo = result.photos[i]
+        photo.status = STATUS_NO_MATCH
+        photo.category = None
+        photo.note = ""
+        photo.candidates = []
+    for i, key in result.manual.items():
+        photo = result.photos[i]
+        if key is None:
+            photo.status, photo.category = STATUS_EXCLUDED, None
+            photo.note = "исключено вручную"
+        else:
+            photo.status = STATUS_MANUAL
+            photo.category = model.reference.categories[key]
+            photo.confidence = 100.0
+            photo.note = "категория задана вручную"
+
+    if free and model.categories:
+        _assign_categories(result, free, used)
+    _complete_sides(result)
+    renumber(result)
+
+
+def _occupied_capacity(model: ReferenceModel, fixed) -> np.ndarray:
+    """fixed — последовательность (категория, экземпляр, сторона) уже названных фото."""
     used = np.zeros(len(model.categories), dtype=int)
-    for cat, _, _ in fixed.values():
+    for cat, _, _ in fixed:
         if cat.key in model.cat_index:
             used[model.cat_index[cat.key]] += 1
     return used
@@ -340,8 +384,13 @@ def use_strict_counts(config: MatchConfig, model: "ReferenceModel", n_photos: in
 
 
 def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -> None:
+    """rows — индексы фото (в порядке папки), которые нужно разложить по категориям."""
     model, config = result.model, result.config
-    cat_dist = apply_sequence_prior(result.cat_dist, config.sequence_weight)
+    # соседей берём по всей папке (порядок съёмки), затем оставляем только нужные строки
+    smoothed = apply_sequence_prior(result.cat_dist, config.sequence_weight)
+    selected = [result.feature_row[i] for i in rows]
+    cat_dist = smoothed[selected]
+    raw_dist = result.cat_dist[selected]
     n, n_cat = cat_dist.shape
     strict = use_strict_counts(config, model, n, int(used.sum()))
     result.strict = strict
@@ -379,11 +428,11 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
         if c < 0:
             photo.status = STATUS_NO_MATCH
             photo.confidence = float(conf.max())
-            photo.distance = float(cat_dist[r].min())
+            photo.distance = float(raw_dist[r].min())
             photo.note = "не похоже ни на одну категорию эталона"
             continue
         photo.confidence = float(conf[c])
-        photo.distance = float(cat_dist[r, c])
+        photo.distance = float(raw_dist[r, c])
         if strict:
             # состав совпадает с эталоном: имя предлагается всегда, сомнительные видны в предпросмотре
             photo.status = STATUS_OK if photo.confidence >= config.min_confidence else STATUS_CHECK
@@ -450,12 +499,42 @@ def _complete_sides(result: FolderMatch) -> None:
                 break
 
 
+def _time_segments(result: FolderMatch, idx: List[int]) -> List[List[int]]:
+    """Делит серию по длинным паузам между кадрами: это разные детали, снятые подряд."""
+    limit = result.config.instance_gap_seconds
+    times = result.times
+    if limit <= 0 or not times:
+        return [idx]
+    segments = [[idx[0]]]
+    for previous, current in zip(idx, idx[1:]):
+        before, after = times[previous], times[current]
+        if before is not None and after is not None and after - before > limit:
+            segments.append([current])
+        else:
+            segments[-1].append(current)
+    return segments
+
+
 def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[int]]:
-    """Делит серию на экземпляры по cat.sides фото. Неполный экземпляр ставится в начало или конец,
-    смотря что лучше согласуется с расстояниями до конкретных сторон эталона."""
+    """Делит серию на экземпляры по cat.sides фото. Сначала серия режется по длинным паузам
+    (разные детали), затем каждый кусок — по числу сторон. Неполный экземпляр ставится
+    в начало или конец, смотря что лучше согласуется с расстояниями до сторон эталона."""
     sides = cat.sides
     if sides == 1:
         return [[i] for i in idx]
+    segments = _time_segments(result, idx)
+    if len(segments) > 1:
+        out = []
+        for segment in segments:
+            out.extend(_split_run_by_sides(result, cat, segment))
+        return out
+    return _split_run_by_sides(result, cat, idx)
+
+
+def _split_run_by_sides(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[int]]:
+    sides = cat.sides
+    if sides == 1 or len(idx) <= 1:
+        return [idx] if len(idx) <= 1 else [[i] for i in idx]
     full, rest = divmod(len(idx), sides)
     if rest == 0:
         return [idx[k:k + sides] for k in range(0, len(idx), sides)]
@@ -515,64 +594,18 @@ def renumber(result: FolderMatch) -> None:
 
 
 def set_category(result: FolderMatch, index: int, key: Optional[str]) -> None:
-    """Ручная правка из предпросмотра: key — ключ категории или None (не переименовывать)."""
-    photo = result.photos[index]
-    if key is None:
-        photo.status, photo.category = STATUS_EXCLUDED, None
-        photo.note = "исключено вручную"
-    else:
-        photo.status, photo.category = STATUS_MANUAL, result.model.reference.categories[key]
-        photo.note = "категория задана вручную"
-    renumber(result)
+    """Ручная правка из предпросмотра: key — ключ категории или None (не переименовывать).
+
+    После правки раскладка пересчитывается целиком: выбранная пользователем категория
+    занимает своё место, поэтому одно исправление помогает правильно разложить остальные фото.
+    """
+    if index in result.fixed:
+        return
+    result.manual[index] = key
+    solve(result)
 
 
-def main(argv=None):
-    """Пробное распознавание без переименования: python -m photo_renamer.matcher <эталон> <папка> [...]."""
-    import argparse
-    import sys
-    import time
-
-    from .reference import describe, load_reference
-    from .scanner import list_photos
-
-    parser = argparse.ArgumentParser(description="Пробное распознавание (только чтение)")
-    parser.add_argument("reference")
-    parser.add_argument("folders", nargs="+")
-    parser.add_argument("--min-confidence", type=float, default=MatchConfig.min_confidence)
-    args = parser.parse_args(argv)
-    config = MatchConfig(min_confidence=args.min_confidence)
-
-    def progress(done, total):
-        sys.stdout.write("\r  чтение фото %d/%d" % (done, total))
-        sys.stdout.flush()
-        if done == total:
-            sys.stdout.write("\n")
-
-    reference = load_reference(args.reference)
-    print(describe(reference))
-    started = time.time()
-    model = ReferenceModel.build(reference, feat.FeatureExtractor(), progress)
-    for w in model.warnings:
-        print("ВНИМАНИЕ: " + w)
-
-    for folder in args.folders:
-        print("\n=== %s" % folder)
-        result = match_folder(model, folder, list_photos(folder).photos, config, progress)
-        for p in result.photos:
-            target = p.new_name or ("(без изменений)" if p.identified else "НЕ ОПОЗНАНО")
-            line = "%-28s -> %-40s %5.1f%%  %s" % (p.filename, target, p.confidence, p.status)
-            if not p.identified and p.candidates:
-                line += "  | " + ", ".join("%s %.0f%%" % (c.category, c.confidence) for c in p.candidates)
-            elif p.note and p.status != STATUS_OK:
-                line += "  | " + p.note
-            print(line)
-        for w in result.warnings:
-            print("ВНИМАНИЕ: " + w)
-        n = len(result.photos)
-        ok = sum(p.identified for p in result.photos)
-        print("Распознано: %d из %d (%.0f%%)" % (ok, n, 100.0 * ok / n if n else 0))
-    print("\nВремя: %.1f с" % (time.time() - started))
-
-
-if __name__ == "__main__":
-    main()
+def clear_category(result: FolderMatch, index: int) -> None:
+    """Отменяет ручной выбор для фото и пересчитывает раскладку."""
+    if result.manual.pop(index, "нет") != "нет":
+        solve(result)

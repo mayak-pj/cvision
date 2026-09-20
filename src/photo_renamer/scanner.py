@@ -28,6 +28,7 @@ class FolderScan:
     photos: List[str]  # имена файлов в порядке обработки
     excluded: List[str] = field(default_factory=list)  # файлы с «рентгенограмма» в имени
     missing_date: List[str] = field(default_factory=list)  # нет даты EXIF (только при SORT_BY_EXIF)
+    order_differs: bool = False  # порядок съёмки не совпал с порядком имён файлов
 
     @property
     def photo_paths(self) -> List[str]:
@@ -118,14 +119,16 @@ def read_exif_datetime(path: str) -> Optional[str]:
     return value.strip(" \x00")
 
 
-def list_photos(folder: str, sort: str = SORT_BY_NAME) -> FolderScan:
+def list_photos(folder: str, sort: str = SORT_BY_NAME, date_source=None) -> FolderScan:
     """Список .jpg-фото папки (без подпапок) в порядке обработки.
 
-    При sort=SORT_BY_EXIF фото без даты съёмки идут в конце, в порядке имён.
+    При sort=SORT_BY_EXIF порядок берётся по дате съёмки: именно он нужен правилам
+    «стороны детали идут подряд» и «экземпляры нумеруются по порядку». Фото без даты
+    остаются в порядке имён. date_source(path) — способ получить дату (например, кэш).
     Исключения ОС (нет доступа и т.п.) пробрасываются вызывающему.
     """
     photos, excluded, _ = _read_dir(folder)
-    return _build_scan(folder, photos, excluded, sort)
+    return _build_scan(folder, photos, excluded, sort, date_source)
 
 
 def _read_dir(folder: str):
@@ -140,17 +143,20 @@ def _read_dir(folder: str):
     return photos, excluded, subdirs
 
 
-def _build_scan(folder: str, photos: List[str], excluded: List[str], sort: str) -> FolderScan:
+def _build_scan(folder: str, photos: List[str], excluded: List[str], sort: str, date_source=None) -> FolderScan:
     if sort not in (SORT_BY_NAME, SORT_BY_EXIF):
         raise ValueError("Неизвестный способ сортировки: %r" % sort)
     photos = sorted(photos, key=natural_key)
     scan = FolderScan(path=folder, photos=photos, excluded=sorted(excluded, key=natural_key))
 
     if sort == SORT_BY_EXIF:
-        dates = {name: read_exif_datetime(os.path.join(folder, name)) for name in photos}
+        read = date_source or read_exif_datetime
+        dates = {name: read(os.path.join(folder, name)) for name in photos}
         scan.missing_date = [name for name in photos if dates[name] is None]
+        by_name = list(photos)
         # sort стабилен: при равных датах сохраняется порядок имён
         photos.sort(key=lambda n: (dates[n] is None, dates[n] or ""))
+        scan.order_differs = photos != by_name
     return scan
 
 
@@ -172,6 +178,7 @@ def find_photo_folders(
     root: str,
     exclude: Sequence[str] = (),
     sort: str = SORT_BY_NAME,
+    date_source=None,
 ) -> ScanResult:
     """Рекурсивно находит все папки внутри root (включая сам root), где есть хотя бы одно фото.
 
@@ -199,7 +206,7 @@ def find_photo_folders(
             continue
 
         if photos:
-            folders.append(_build_scan(current, photos, excluded, sort))
+            folders.append(_build_scan(current, photos, excluded, sort, date_source))
         subdirs.sort(key=natural_key, reverse=True)  # reverse: стек отдаёт первым первое имя
         stack.extend(os.path.join(current, name) for name in subdirs)
 

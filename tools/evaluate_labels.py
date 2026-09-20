@@ -46,6 +46,50 @@ def read_labels(path):
     return out
 
 
+def expected_names(reference, filenames, truth):
+    """Правильные имена по разметке: подряд идущие фото одной категории — стороны и экземпляры,
+    число сторон берётся из эталона, номера — по порядку появления."""
+    names = [None] * len(filenames)
+    index = 0
+    counters = {}
+    while index < len(filenames):
+        key = truth[index]
+        if key is None or key not in reference.categories:
+            index += 1
+            continue
+        run = index
+        while run < len(filenames) and truth[run] == key:
+            run += 1
+        category = reference.categories[key]
+        group = list(range(index, run))
+        for start in range(0, len(group), category.sides):
+            chunk = group[start:start + category.sides]
+            number = counters.get(key, 0) + 1
+            counters[key] = number
+            for side, position in enumerate(chunk, start=1):
+                names[position] = category.format_name(number, side, os.path.splitext(filenames[position])[1])
+        index = run
+    return names
+
+
+def score_names(result, expected):
+    """Сравнение итоговых имён (категория + номер экземпляра + сторона)."""
+    counts = Counter()
+    wrong = []
+    for photo, want in zip(result.photos, expected):
+        got = photo.new_name or photo.filename
+        if want is None:
+            counts["верно" if not photo.new_name else "НЕВЕРНО"] += 1
+        elif got == want:
+            counts["верно"] += 1
+        elif not photo.new_name:
+            counts["не переименовано"] += 1
+        else:
+            counts["НЕВЕРНО"] += 1
+            wrong.append((photo.filename, got, want))
+    return counts, wrong
+
+
 def score(result, truth):
     counts = Counter()
     wrong = []
@@ -76,6 +120,22 @@ def main():
     total = sum(len(n) for _, n, _ in labels)
     print("Размечено фото: %d в %d папках" % (total, len(labels)))
 
+    order_cache = {}
+
+    def in_shooting_order(folder, names, truth):
+        """Порядок съёмки (как в программе): по дате из EXIF, фото без даты — в порядке имён."""
+        if folder not in order_cache:
+            from photo_renamer.cache import PhotoCache
+            photos = PhotoCache(os.path.join("cache", "photos.sqlite"))
+            dates = {n: photos.shot_time(os.path.join(folder, n)) for n in names}
+            photos.close()
+            order = sorted(range(len(names)), key=lambda i: (dates[names[i]] is None, dates[names[i]] or "", i))
+            order_cache[folder] = order
+        order = order_cache[folder]
+        return [names[i] for i in order], [truth[i] for i in order]
+
+    labels = [(folder,) + in_shooting_order(folder, names, truth) for folder, names, truth in labels]
+
     cache = {}
 
     def prepared(white_balance):
@@ -83,8 +143,14 @@ def main():
             ex = feat.FeatureExtractor(white_balance=white_balance)
             ref_feats, _ = feat.extract_many(ex, [p.path for p in reference.photos])
             model = matcher.ReferenceModel(reference, ex, ref_feats)
-            folders = [(folder, names, feat.extract_many(ex, [os.path.join(folder, n) for n in names])[0], truth)
-                       for folder, names, truth in labels]
+            from photo_renamer.cache import PhotoCache
+            photos_cache = PhotoCache(os.path.join("cache", "photos.sqlite"))
+            folders = []
+            for folder, names, truth in labels:
+                paths = [os.path.join(folder, n) for n in names]
+                folders.append((folder, names, feat.extract_many(ex, paths)[0], truth,
+                                photos_cache.shot_seconds(paths)))
+            photos_cache.close()
             cache[white_balance] = (model, folders)
         return cache[white_balance]
 
@@ -92,8 +158,8 @@ def main():
         model, folders = prepared(white_balance)
         counts = Counter()
         per_folder = []
-        for folder, names, fs, truth in folders:
-            result = matcher.match_features(model, folder, names, fs, config)
+        for folder, names, fs, truth, times in folders:
+            result = matcher.match_features(model, folder, names, fs, config, times=times)
             c, wrong = score(result, truth)
             counts += c
             per_folder.append((os.path.basename(folder), c))
@@ -112,6 +178,21 @@ def main():
     for wb_flag in (False, True):
         counts, per_folder = evaluate(wb_flag, base, show_errors=not args.grid)
         print(line("по умолчанию, баланс по фону=%s" % wb_flag, counts, per_folder))
+
+    # точность по именам целиком: категория + номер экземпляра + сторона
+    model, prepared_folders = prepared(False)
+    total_names = Counter()
+    for folder, names, fs, truth, times in prepared_folders:
+        result = matcher.match_features(model, folder, names, fs, base, times=times)
+        counts, wrong = score_names(result, expected_names(reference, names, truth))
+        total_names += counts
+        print("  имена целиком, %s: верно %d, НЕВЕРНО %d, не переименовано %d"
+              % (os.path.basename(folder), counts["верно"], counts["НЕВЕРНО"], counts["не переименовано"]))
+        for filename, got, want in wrong[:8]:
+            print("      %s: «%s» вместо «%s»" % (filename, got, want))
+    print("  имена целиком, всего: верно %d из %d (%.0f%%), НЕВЕРНО %d, не переименовано %d"
+          % (total_names["верно"], total, 100.0 * total_names["верно"] / total, total_names["НЕВЕРНО"],
+             total_names["не переименовано"]))
     if not args.grid:
         return
 

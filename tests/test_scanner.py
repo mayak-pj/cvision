@@ -237,3 +237,18 @@ def test_io_path_noop_on_posix(monkeypatch):
 @pytest.mark.parametrize("name", ["a.tif", "b.TIFF", "c.tiff", "d.jpeg", "e.JPEG", "f.png"])
 def test_other_image_formats_are_ignored(name):
     assert not is_jpg_name(name)
+
+
+def test_exif_order_differs_flag(tmp_path):
+    folder = tmp_path / "SN"
+    os.makedirs(str(folder))
+    for name in ("b.jpg", "a.jpg", "c.jpg"):
+        touch(str(folder / name))
+    dates = {"a.jpg": "2024:05:01 10:00:30", "b.jpg": "2024:05:01 10:00:10", "c.jpg": "2024:05:01 10:00:20"}
+    scan = list_photos(str(folder), sort=SORT_BY_EXIF, date_source=lambda p: dates[os.path.basename(p)])
+    assert scan.photos == ["b.jpg", "c.jpg", "a.jpg"]
+    assert scan.order_differs
+
+    same = {"a.jpg": "2024:05:01 10:00:10", "b.jpg": "2024:05:01 10:00:20", "c.jpg": "2024:05:01 10:00:30"}
+    scan = list_photos(str(folder), sort=SORT_BY_EXIF, date_source=lambda p: same[os.path.basename(p)])
+    assert scan.photos == ["a.jpg", "b.jpg", "c.jpg"] and not scan.order_differs

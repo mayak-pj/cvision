@@ -43,7 +43,7 @@ def test_invalid_values_fall_back_with_warnings(tmp_path):
     config, warnings = cfg.load_config(str(path))
     assert len(warnings) == 8
     assert config.match.min_confidence == 50 and config.match.max_distance == 0.40
-    assert config.rotations == 1 and config.sort == "name"
+    assert config.rotations == 1 and config.sort == "exif"  # значение по умолчанию
 
 
 def test_broken_json(tmp_path):

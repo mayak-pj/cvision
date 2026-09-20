@@ -316,3 +316,56 @@ def test_strict_counts_marks_doubtful_photos():
     doubtful = [p for p in result.photos if p.status == STATUS_CHECK]
     assert doubtful and all("проверьте" in p.note for p in doubtful)
     assert all(p.new_name for p in result.photos)        # имя предложено всем
+
+
+def test_manual_choice_propagates_to_other_photos():
+    """Исправление пользователя пересчитывает раскладку: место категории занято, и соседи встают верно."""
+    rows = [
+        {"Кабель DP": 0.10, "Кабель DP-miniDP": 0.12},
+        {"Кабель DP": 0.11, "Кабель DP-miniDP": 0.13},
+    ]
+    result = run(rows)
+    assert [p.category.name for p in result.photos] == ["Кабель DP-miniDP", "Кабель DP"]
+
+    # пользователь говорит: первое фото — это «Кабель DP»
+    set_category(result, 0, category_key("Кабель DP"))
+    assert [p.category.name for p in result.photos] == ["Кабель DP", "Кабель DP-miniDP"]
+    assert result.photos[0].status == STATUS_MANUAL
+
+    from photo_renamer.matcher import clear_category
+
+    clear_category(result, 0)
+    assert [p.category.name for p in result.photos] == ["Кабель DP-miniDP", "Кабель DP"]
+
+
+def test_manual_choice_frees_capacity_for_others():
+    rows = [{"Кулер": 0.10}, {"Кулер": 0.12}, {"Кабель HDMI": 0.30, "Кулер": 0.14}]
+    result = run(rows)
+    assert result.category_counts()["Кулер"] >= 1
+    set_category(result, 0, None)                       # первое фото не переименовывать
+    assert result.photos[0].status == STATUS_EXCLUDED
+    assert result.photos[0].new_name is None
+    assert result.photos[1].category.name == "Кулер"    # нумерация и раскладка пересчитаны
+    assert result.photos[1].new_name == "Кулер.JPG"
+
+
+def test_runs_split_by_long_pause_between_shots():
+    """Две детали одной категории сняты подряд: длинная пауза делит их на экземпляры."""
+    rows = [{"Оперативная память": 0.10}] * 4
+    names = ["DSC_%04d.JPG" % (i + 1) for i in range(4)]
+    model = FakeModel(rows)
+    # пауза 3 с внутри детали и 40 с между деталями
+    times = [0.0, 3.0, 43.0, 46.0]
+    config = MatchConfig(strict_counts=False, instance_gap_seconds=15)
+    result = match_features(model, "/t", names, list(range(4)), config, times=times)
+    assert [(p.instance, p.side) for p in result.photos] == [(1, 1), (1, 2), (2, 1), (2, 2)]
+
+    # если пауза стоит в середине пары, деление по времени показывает неполные экземпляры
+    result = match_features(model, "/t", names, list(range(4)), config, times=[0.0, 40.0, 43.0, 90.0])
+    assert [(p.instance, p.side) for p in result.photos] == [(1, 1), (2, 1), (2, 2), (3, 1)]
+    assert sum("Неполный комплект" in w for w in result.warnings) == 2
+
+
+def test_time_gaps_ignored_without_times():
+    rows = [{"Оперативная память": 0.10}] * 4
+    assert [(p.instance, p.side) for p in run(rows).photos] == [(1, 1), (1, 2), (2, 1), (2, 2)]

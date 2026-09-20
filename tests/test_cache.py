@@ -117,3 +117,17 @@ def test_new_settings_reuse_thumbnail_without_reading_photo(tmp_path, photo_dir,
     assert other is not None and calls == []        # фото не перечитывалось
     assert cache.features(path, FeatureExtractor(hist_bins=(8, 4, 4))) is not None
     assert calls == []
+
+
+def test_shot_time_is_cached(tmp_path, photo_dir, monkeypatch):
+    from photo_renamer import cache as cache_module
+
+    path = str(photo_dir / "DSC_0000.JPG")
+    cache = PhotoCache(str(tmp_path / "c.sqlite"))
+    reads = []
+    real = cache_module.read_exif_datetime
+    monkeypatch.setattr(cache_module, "read_exif_datetime", lambda p: reads.append(p) or real(p))
+    assert cache.shot_time(path) is None          # у синтетического фото даты нет
+    assert len(reads) == 1
+    cache.shot_time(path)
+    assert len(reads) == 1                        # второй раз файл не открывается

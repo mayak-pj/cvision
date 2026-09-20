@@ -117,12 +117,13 @@ class ReferenceEditor(tk.Toplevel):
 
     def _load_folder(self) -> None:
         try:
-            scan = list_photos(self.folder, sort=self.app_config.sort)
+            scan = list_photos(self.folder, sort=self.app_config.sort, date_source=self.cache.shot_time)
         except OSError as exc:
             messagebox.showerror(TITLE, "Не удалось прочитать папку:\n%s" % exc, parent=self)
             self.photos = []
             return
         self.photos = list(scan.photos)
+        self.order_differs = scan.order_differs
         self.grid_widget.set_items(self._items(), self._template_flags())
         self._refresh_names()
         self._update_status()
@@ -184,6 +185,8 @@ class ReferenceEditor(tk.Toplevel):
     def _update_status(self, loading=None) -> None:
         named = sum(self._template_flags())
         text = "Фото: %d, названо по шаблону: %d, осталось: %d" % (len(self.photos), named, len(self.photos) - named)
+        if getattr(self, "order_differs", False):
+            text += "   (порядок съёмки не совпадает с порядком имён — показан порядок съёмки)"
         if loading:
             text += "   загрузка миниатюр: %d из %d" % loading
         self.status_var.set(text)

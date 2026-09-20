@@ -27,7 +27,7 @@ class AppConfig:
     hist_bins: Tuple[int, int, int] = (12, 4, 4)
     rotations: int = 1
     white_balance: bool = False
-    sort: str = SORT_BY_NAME
+    sort: str = SORT_BY_EXIF   # порядок съёмки надёжнее порядка имён (см. docs/decisions.md)
     problem_categories: List[str] = field(default_factory=list)
     logs_dir: str = "logs"
     cache_dir: str = "cache"
@@ -103,6 +103,7 @@ _MATCH_KEYS = {
     "side_fill_top_k": _number(1, 10, integer=True),
     "weights": _check_weights,
     "sequence_weight": _number(0, 3),
+    "instance_gap_seconds": _number(0, 3600),
     "strict_counts": lambda v: None if isinstance(v, bool) or v == "auto" else "допустимо true, false или \"auto\"",
     "adapt_power": _number(0, 16),
 }

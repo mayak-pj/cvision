@@ -24,7 +24,7 @@ from typing import List, Optional, Sequence, Tuple
 from PIL import Image
 
 from . import features as feat
-from .scanner import io_path
+from .scanner import io_path, read_exif_datetime
 
 THUMB_SIZE = feat.THUMB_SIZE
 THUMB_QUALITY = feat.THUMB_QUALITY
@@ -55,6 +55,7 @@ class PhotoCache:
             CREATE TABLE IF NOT EXISTS thumbs (key TEXT PRIMARY KEY, jpeg BLOB, used REAL);
             CREATE TABLE IF NOT EXISTS feats (key TEXT, version TEXT, data BLOB, used REAL,
                                               PRIMARY KEY (key, version));
+            CREATE TABLE IF NOT EXISTS shots (key TEXT PRIMARY KEY, shot TEXT);
         """)
         self._writes = 0
 
@@ -109,6 +110,31 @@ class PhotoCache:
             return self._compute(path, key, extractor)
         self._db.execute("UPDATE thumbs SET used = ? WHERE key = ?", (now, key))
         return row[0], features
+
+    def shot_time(self, path: str) -> Optional[str]:
+        """Дата съёмки (EXIF DateTimeOriginal) с запоминанием: по сети файл открывается один раз."""
+        try:
+            key = file_key(path)
+        except OSError:
+            return None
+        row = self._db.execute("SELECT shot FROM shots WHERE key = ?", (key,)).fetchone()
+        if row is not None:
+            return row[0] or None
+        shot = read_exif_datetime(path)
+        self._db.execute("INSERT OR REPLACE INTO shots VALUES (?, ?)", (key, shot or ""))
+        self._after_write()
+        return shot
+
+    def shot_seconds(self, paths: Sequence[str]) -> List[Optional[float]]:
+        """Время съёмки каждого фото в секундах (для деления серий по паузам)."""
+        out = []
+        for path in paths:
+            stamp = self.shot_time(path)
+            try:
+                out.append(time.mktime(time.strptime(stamp, "%Y:%m:%d %H:%M:%S")) if stamp else None)
+            except ValueError:
+                out.append(None)
+        return out
 
     def thumbnail(self, path: str) -> Image.Image:
         jpeg, _ = self.get(path)

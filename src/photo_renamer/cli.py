@@ -52,10 +52,13 @@ def run_batch(reference_dir: str, targets: List[str], config: cfg.AppConfig, app
         raise SystemExit("В эталонной папке нет фото — обработка невозможна")
 
     scans, errors = [], []
+    cache_dates = PhotoCache(config.cache_path(), config.cache_max_mb)
     for target in targets:
-        result = find_photo_folders(target, exclude=[reference_dir], sort=config.sort)
+        result = find_photo_folders(target, exclude=[reference_dir], sort=config.sort,
+                                    date_source=cache_dates.shot_time)
         scans.extend(result.folders)
         errors.extend(result.errors)
+    cache_dates.close()
     for e in errors:
         out("ОШИБКА ДОСТУПА: %s — %s" % (e.path, e.message))
     out("Найдено папок с фото: %d" % len(scans))
@@ -79,7 +82,8 @@ def run_batch(reference_dir: str, targets: List[str], config: cfg.AppConfig, app
         for n, scan in enumerate(scans, start=1):
             out("\nПапка %d из %d: %s" % (n, len(scans), scan.path))
             match = match_folder(model, scan.path, scan.photos, config.match, _progress("  чтение фото"),
-                                 feature_source=cache.extract_many)
+                                 feature_source=cache.extract_many,
+                                 shot_times=cache.shot_seconds(scan.photo_paths))
             try:
                 plan = renamer.build_plan(match)
             except OSError as exc:
@@ -125,7 +129,7 @@ def run_groups(roots: List[str], config: cfg.AppConfig, out=print) -> grouping.P
     try:
         analysis = grouping.analyze_project(
             roots, config.extractor(), config.match.weights, config.group_threshold,
-            feature_source=cache.extract_many, sort=config.sort,
+            feature_source=cache.extract_many, sort=config.sort, date_source=cache.shot_time,
             on_folder=lambda n, total, path: out("Папка %d из %d: %s" % (n, total, path)),
             on_progress=_progress("  чтение фото"))
     finally:

@@ -128,6 +128,7 @@ def analyze_project(
     threshold: float = 0.30,
     feature_source: Optional[Callable] = None,
     sort: str = "name",
+    date_source=None,
     on_folder: Optional[Callable[[int, int, str], None]] = None,
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> ProjectAnalysis:
@@ -136,7 +137,7 @@ def analyze_project(
     feature_source = feature_source or feat.extract_many
     scans, errors = [], []
     for root in roots:
-        result = find_photo_folders(root, sort=sort)
+        result = find_photo_folders(root, sort=sort, date_source=date_source)
         scans.extend(result.folders)
         errors.extend(result.errors)
 
@@ -212,11 +213,11 @@ def set_reference(analysis: ProjectAnalysis, folder: FolderInfo) -> None:
     group.reference_is_ready = folder.is_reference
 
 
-def refresh_names(analysis: ProjectAnalysis, sort: str = "name") -> None:
+def refresh_names(analysis: ProjectAnalysis, sort: str = "name", date_source=None) -> None:
     """Перечитывает имена файлов (не сами фото) — например, после создания эталона в редакторе."""
     for k, info in enumerate(analysis.folders):
         try:
-            fresh = folder_info(list_photos(info.path, sort=sort))
+            fresh = folder_info(list_photos(info.path, sort=sort, date_source=date_source))
         except OSError:
             continue
         info.scan, info.named_share, info.categories = fresh.scan, fresh.named_share, fresh.categories
