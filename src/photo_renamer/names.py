@@ -31,6 +31,25 @@ def _words(text: str) -> List[str]:
     return [w for w in fold(text).replace("-", " ").replace(",", " ").split() if w]
 
 
+def filter_names(query: str, names: Iterable[str]) -> List[str]:
+    """Имена, подходящие под запрос: каждое слово запроса — начало какого-нибудь слова имени.
+    Сначала те, что начинаются с запроса. Если совпадений нет — поиск по вхождению."""
+    names = list(names)
+    query = fold(query).strip()
+    if not query:
+        return names
+    tokens = _words(query)
+    matches = []
+    for name in names:
+        words = _words(name)
+        if all(any(word.startswith(token) for word in words) for token in tokens):
+            rank = 0 if fold(name).startswith(query) else (1 if words and words[0].startswith(tokens[0]) else 2)
+            matches.append((rank, fold(name), name))
+    if not matches:
+        matches = [(3, fold(name), name) for name in names if query in fold(name)]
+    return [name for _, _, name in sorted(matches)]
+
+
 class NamesList:
     """Имена категорий и обычное число ракурсов для каждого."""
 
@@ -126,17 +145,4 @@ class NamesList:
     # --- поиск --------------------------------------------------------------------
 
     def search(self, query: str) -> List[str]:
-        query = fold(query).strip()
-        if not query:
-            return self.names()
-        tokens = _words(query)
-        matches = []
-        for key in self._order:
-            name = self._names[key]
-            words = _words(name)
-            if all(any(word.startswith(token) for word in words) for token in tokens):
-                rank = 0 if fold(name).startswith(query) else (1 if words and words[0].startswith(tokens[0]) else 2)
-                matches.append((rank, fold(name), name))
-        if not matches:  # запасной вариант: просто вхождение
-            matches = [(3, fold(self._names[k]), self._names[k]) for k in self._order if query in fold(self._names[k])]
-        return [name for _, _, name in sorted(matches)]
+        return filter_names(query, self.names())

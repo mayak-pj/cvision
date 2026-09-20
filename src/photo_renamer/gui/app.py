@@ -17,6 +17,7 @@ from .. import grouping
 from ..cache import PhotoCache
 from ..names import NamesList
 from .editor import ReferenceEditor
+from .review import BatchWindow
 
 TITLE = "Переименование фото комплектующих"
 
@@ -377,8 +378,14 @@ class MainWindow(tk.Tk):
         ReferenceEditor(self, folder.path, self.app_config, self.names, on_done=self.refresh)
 
     def rename_group(self) -> None:
-        messagebox.showinfo(TITLE, "Пакетное переименование группы появится на следующем шаге разработки.",
-                            parent=self)
+        group = self._selected_group()
+        if group is None:
+            return
+        target = self.analysis.groups[group]
+        if not target.targets:
+            messagebox.showinfo(TITLE, "В этой группе нет папок для переименования.", parent=self)
+            return
+        BatchWindow(self, target, self.app_config, on_done=self.refresh)
 
     def on_close(self) -> None:
         if self._busy:

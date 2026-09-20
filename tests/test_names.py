@@ -86,3 +86,12 @@ def test_warnings_and_bad_lines(tmp_path):
 def test_empty_name_rejected():
     with pytest.raises(ValueError):
         NamesList().add("   ")
+
+
+def test_filter_names_function():
+    from photo_renamer.names import filter_names
+
+    names = ["Кабель питания", "Кабель соединительный", "Плата оперативной памяти", "Блок питания"]
+    assert filter_names("пит", names) == ["Блок питания", "Кабель питания"]  # равный ранг — по алфавиту
+    assert filter_names("каб пит", names) == ["Кабель питания"]
+    assert filter_names("", names) == names

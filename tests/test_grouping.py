@@ -1,6 +1,7 @@
 """Группировка папок проекта и поиск готовых эталонов."""
 
 import os
+import zlib
 
 import numpy as np
 
@@ -12,9 +13,11 @@ W = {FG_HIST: 2, LBP: 1, HOG: 1}
 
 
 def shoot(folder, seeds, names=None, tint=None):
+    """Снимает «папку»: те же детали, но каждый раз с другими искажениями.
+    Seed устойчив между запусками (встроенная hash() меняется из-за рандомизации)."""
     os.makedirs(str(folder), exist_ok=True)
     for k, s in enumerate(seeds):
-        img = perturb(make_part(s), seed=hash((str(folder), k)) % 1000)
+        img = perturb(make_part(s), seed=zlib.crc32(("%s|%d" % (os.path.basename(str(folder)), k)).encode()) % 1000)
         if tint is not None:  # другое освещение
             arr = np.asarray(img, dtype=np.float32) * np.array(tint)
             from PIL import Image
