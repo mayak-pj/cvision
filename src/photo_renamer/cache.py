@@ -26,8 +26,8 @@ from PIL import Image
 from . import features as feat
 from .scanner import io_path
 
-THUMB_SIZE = 400
-THUMB_QUALITY = 85
+THUMB_SIZE = feat.THUMB_SIZE
+THUMB_QUALITY = feat.THUMB_QUALITY
 _EDGE = 64 * 1024
 _EVICT_EVERY = 200  # проверять размер кэша раз в столько записей
 
@@ -66,10 +66,8 @@ class PhotoCache:
 
     def _compute(self, path: str, key: str, extractor: Optional[feat.FeatureExtractor]):
         img = feat.load_image(path, max(extractor.work_size if extractor else 0, feat.DECODE_SIZE))
-        buf = io.BytesIO()
-        feat.fit(img, THUMB_SIZE).save(buf, "JPEG", quality=THUMB_QUALITY)
-        thumb = buf.getvalue()
-        features = extractor.from_loaded(img) if extractor else None
+        thumb = feat.thumbnail_jpeg(img)
+        features = extractor.from_thumbnail(thumb) if extractor else None
         now = time.time()
         self._db.execute("INSERT OR REPLACE INTO thumbs VALUES (?, ?, ?)", (key, thumb, now))
         if features is not None:
@@ -100,7 +98,14 @@ class PhotoCache:
                 features = pickle.loads(frow[0])
                 self._db.execute("UPDATE feats SET used = ? WHERE key = ? AND version = ?",
                                  (now, key, extractor.version()))
-        if row is None or (extractor is not None and features is None):
+        if row is not None and extractor is not None and features is None:
+            # миниатюра есть, а признаков нет (сменились настройки) — считаем из миниатюры,
+            # не перечитывая фото по сети
+            features = extractor.from_thumbnail(row[0])
+            self._db.execute("INSERT OR REPLACE INTO feats VALUES (?, ?, ?, ?)",
+                             (key, extractor.version(), pickle.dumps(features, protocol=4), now))
+            self._after_write()
+        if row is None:
             return self._compute(path, key, extractor)
         self._db.execute("UPDATE thumbs SET used = ? WHERE key = ?", (now, key))
         return row[0], features

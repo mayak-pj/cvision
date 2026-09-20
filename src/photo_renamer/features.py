@@ -18,6 +18,7 @@
 признак (например, ORB из OpenCV) добавляется как ещё одна компонента без изменений матчера.
 """
 
+import io
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
@@ -65,7 +66,21 @@ class Features:
 # Размер, до которого фото декодируется при чтении: хватает и для признаков (256 px),
 # и для миниатюры в редакторе эталона (до 400 px). Для фото 6000×4000 draft() даёт 750×500.
 DECODE_SIZE = 400
-FEATURE_VERSION = "2"  # увеличить при изменении способа расчёта признаков (сбрасывает кэш признаков)
+THUMB_SIZE = 400      # размер миниатюры, она же — единственный источник признаков
+THUMB_QUALITY = 85
+FEATURE_VERSION = "3"  # увеличить при изменении способа расчёта признаков (сбрасывает кэш признаков)
+
+
+def thumbnail_jpeg(img: Image.Image) -> bytes:
+    """Миниатюра в JPEG — канонический промежуточный вид фото.
+
+    Признаки считаются именно из неё: так они одинаковы и при чтении с диска, и из кэша,
+    а сжатие JPEG заодно убирает шум матрицы. На реальных фото это дало заметный прирост
+    точности (особенно признаку текстуры, который к шуму чувствителен).
+    """
+    buffer = io.BytesIO()
+    fit(img, THUMB_SIZE).save(buffer, "JPEG", quality=THUMB_QUALITY)
+    return buffer.getvalue()
 
 
 def fit(img: Image.Image, size: int) -> Image.Image:
@@ -257,12 +272,12 @@ class FeatureExtractor:
         )
 
     def from_file(self, path: str) -> Features:
-        return self.from_loaded(load_image(path, max(self.work_size, DECODE_SIZE)))
+        return self.from_thumbnail(thumbnail_jpeg(load_image(path, max(self.work_size, DECODE_SIZE))))
 
-    def from_loaded(self, img: Image.Image) -> Features:
-        """Признаки из изображения, прочитанного load_image(path, DECODE_SIZE).
-        Единая точка для обычного чтения и для кэша: признаки получаются одинаковыми."""
-        return self.from_image(fit(img, self.work_size))
+    def from_thumbnail(self, data: bytes) -> Features:
+        """Признаки из миниатюры (JPEG). Единая точка для чтения с диска и для кэша."""
+        with Image.open(io.BytesIO(data)) as thumb:
+            return self.from_image(fit(thumb.convert("RGB"), self.work_size))
 
     def version(self) -> str:
         """Строка, однозначно описывающая способ расчёта признаков (ключ кэша признаков)."""

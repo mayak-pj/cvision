@@ -71,10 +71,10 @@ def test_changed_settings_recompute_features_only(tmp_path, photo_dir, monkeypat
     cache.features(path, FeatureExtractor())
     calls = count_loads(monkeypatch)
     other = cache.features(path, FeatureExtractor(white_balance=True))
-    assert len(calls) == 1 and other is not None   # новые признаки посчитаны
+    assert other is not None and calls == []        # новые признаки посчитаны из миниатюры
     cache.features(path, FeatureExtractor())
     cache.thumbnail(path)
-    assert len(calls) == 1                          # старые признаки и миниатюра остались
+    assert calls == []                              # старые признаки и миниатюра остались
 
 
 def test_same_size_different_content_not_confused(tmp_path):
@@ -105,3 +105,15 @@ def test_eviction_keeps_size_under_limit(tmp_path, photo_dir):
     cache.evict()
     assert cache.size_bytes() <= cache.max_bytes
     assert cache.features(paths[-1], FeatureExtractor()) is not None  # удалённое пересчитывается
+
+
+def test_new_settings_reuse_thumbnail_without_reading_photo(tmp_path, photo_dir, monkeypatch):
+    """Смена настроек признаков не должна приводить к повторному чтению фото (важно для сети)."""
+    cache = PhotoCache(str(tmp_path / "c.sqlite"))
+    path = str(photo_dir / "DSC_0002.JPG")
+    cache.features(path, FeatureExtractor())
+    calls = count_loads(monkeypatch)
+    other = cache.features(path, FeatureExtractor(hist_bins=(8, 4, 4)))
+    assert other is not None and calls == []        # фото не перечитывалось
+    assert cache.features(path, FeatureExtractor(hist_bins=(8, 4, 4))) is not None
+    assert calls == []
