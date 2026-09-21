@@ -79,7 +79,10 @@ def test_build_creates_distribution(tmp_path, parts):
     python_dir = out / "python"
     assert (python_dir / "python.exe").exists()
     pth = (python_dir / "python38._pth").read_text(encoding="ascii")
-    assert "import site" in pth and "..\\src" in pth and not pth.strip().startswith("#import")
+    lines = pth.split()
+    assert "import" in pth and "..\\src" in lines and not pth.strip().startswith("#import")
+    # без строки «Lib» не находится tkinter: окно не запускается
+    assert "Lib" in lines and "Lib\\site-packages" in lines
 
     site_packages = python_dir / "Lib" / "site-packages"
     assert (site_packages / "numpy" / "__init__.py").exists()

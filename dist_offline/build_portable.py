@@ -55,12 +55,14 @@ set HERE=%~dp0
 pause
 """
 # Содержимое python38._pth: пути поиска модулей для embeddable Python.
-# «import site» обязателен, иначе не подхватятся пакеты из Lib\site-packages,
+# «import site» обязателен, иначе не подхватятся пакеты из Lib\site-packages;
+# «Lib» нужен сам по себе — там лежит tkinter (без этой строки окно не запускается);
 # «..\src» — код программы. Файл читается как ASCII, поэтому без комментариев по-русски.
 PTH_CONTENT = """python38.zip
 .
 ..
 ..\\src
+Lib
 Lib\\site-packages
 import site
 """
