@@ -99,12 +99,23 @@ class BatchWindow(tk.Toplevel):
         self.tree.tag_configure("manual", foreground="#1D4ED8")
         self.tree.tag_configure("skip", foreground="#6B7280")
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_row_select())
+        for number in range(1, 4):  # 1, 2, 3 — выбрать кандидата с этим номером
+            self.tree.bind("<Key-%d>" % number, lambda e, n=number: self.apply_candidate(n))
+        self.tree.bind("<Key-0>", lambda e: self.exclude_selected())
+        for key in ("<Delete>", "<BackSpace>"):
+            self.tree.bind(key, lambda e: self.exclude_selected())
 
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
         ttk.Label(side, text="Выбранные фото").pack(anchor="w")
+        ttk.Label(side, foreground="#555555", wraplength=300, justify="left",
+                  text="Клавиши в таблице: 1, 2, 3 — выбрать кандидата, 0 — не переименовывать. "
+                       "После выбора переход к следующей строке.").pack(anchor="w", pady=(0, 6))
         self.only_doubtful = tk.BooleanVar(value=False)
         ttk.Checkbutton(side, text="Показать только требующие проверки", variable=self.only_doubtful,
+                        command=self.render_rows).pack(anchor="w")
+        self.sort_doubtful = tk.BooleanVar(value=True)
+        ttk.Checkbutton(side, text="Сомнительные — первыми", variable=self.sort_doubtful,
                         command=self.render_rows).pack(anchor="w", pady=(0, 6))
         self.candidates_frame = ttk.Frame(side)
         self.candidates_frame.pack(fill="x", pady=(4, 8))
@@ -203,13 +214,18 @@ class BatchWindow(tk.Toplevel):
         self.render_rows()
         self.load_thumbnails()
 
+    def _display_photos(self) -> List:
+        photos = [p for p in self.match.photos if not self.only_doubtful.get() or self._is_doubtful(p)]
+        if self.sort_doubtful.get():  # сомнительные первыми, внутри — порядок съёмки
+            photos.sort(key=lambda p: (not self._is_doubtful(p), p.index))
+        return photos
+
     def render_rows(self) -> None:
-        selected = set(self.tree.selection())
+        # выделение запоминается по фото: строки пересоздаются, и их идентификаторы меняются
+        selected = set(self._selected_indexes())
         self.tree.delete(*self.tree.get_children())
         self._row_index.clear()
-        for photo in self.match.photos:
-            if self.only_doubtful.get() and not self._is_doubtful(photo):
-                continue
+        for photo in self._display_photos():
             new = photo.new_name or ("" if photo.identified else "— не переименовывать —")
             tags = []
             if photo.status in (matcher.STATUS_LOW_CONFIDENCE, matcher.STATUS_NO_MATCH, matcher.STATUS_SIDE_RULE,
@@ -223,7 +239,7 @@ class BatchWindow(tk.Toplevel):
                 new, "%.0f%%" % photo.confidence if photo.confidence else "", STATUS_TEXT.get(photo.status, "")),
                 image=self._photos.get(photo.filename, ""), tags=tuple(tags))
             self._row_index[iid] = photo.index
-            if iid in selected:
+            if photo.index in selected:
                 self.tree.selection_add(iid)
         self._update_counts()
 
@@ -271,6 +287,45 @@ class BatchWindow(tk.Toplevel):
     def _selected_indexes(self) -> List[int]:
         return [self._row_index[iid] for iid in self.tree.selection() if iid in self._row_index]
 
+    def _selected_rows(self) -> List[str]:
+        return [iid for iid in self.tree.selection() if iid in self._row_index]
+
+    def _next_photo(self) -> Optional[int]:
+        """Фото, стоящее в таблице сразу за выбранным (запоминается ДО перестроения таблицы:
+        после правки строка перестаёт быть сомнительной и уезжает вниз)."""
+        rows = self.tree.get_children()
+        current = self._selected_rows()
+        if not rows or not current or current[-1] not in rows:
+            return None
+        position = rows.index(current[-1])
+        return self._row_index[rows[position + 1]] if position + 1 < len(rows) else None
+
+    def _select_photo(self, index: Optional[int]) -> None:
+        if index is None:
+            return
+        for iid, photo_index in self._row_index.items():
+            if photo_index == index:
+                self.tree.selection_set(iid)
+                self.tree.focus(iid)
+                self.tree.see(iid)
+                return
+
+    def apply_candidate(self, number: int) -> None:
+        """Клавиши 1–3: каждому выбранному фото назначается его собственный кандидат с этим номером."""
+        indexes = self._selected_indexes()
+        if not indexes:
+            return
+        following = self._next_photo()
+        applied = 0
+        for index in indexes:
+            candidates = self.match.photos[index].candidates
+            if len(candidates) >= number:
+                matcher.set_category(self.match, index, category_key(candidates[number - 1].category))
+                applied += 1
+        if applied:
+            self.render_rows()
+            self._select_photo(following)
+
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
             widget.destroy()
@@ -283,8 +338,8 @@ class BatchWindow(tk.Toplevel):
             ttk.Label(self.candidates_frame, text="Кандидатов нет").pack(anchor="w")
             return
         ttk.Label(self.candidates_frame, text="Похоже на:").pack(anchor="w")
-        for candidate in photo.candidates:
-            text = "%s — %.0f%%" % (candidate.category, candidate.confidence)
+        for number, candidate in enumerate(photo.candidates, start=1):
+            text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
             ttk.Button(self.candidates_frame, text=text,
                        command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
 
@@ -306,9 +361,11 @@ class BatchWindow(tk.Toplevel):
             messagebox.showinfo(TITLE, "Выберите фото в таблице.", parent=self)
             return
         key = None if category is None else category_key(category)
+        following = self._next_photo()
         for index in indexes:
             matcher.set_category(self.match, index, key)
         self.render_rows()
+        self._select_photo(following)
 
     def exclude_selected(self) -> None:
         self.apply_category(None)

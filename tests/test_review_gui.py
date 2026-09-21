@@ -51,6 +51,14 @@ def rows(win):
     return [(win.tree.item(iid, "text").strip(), win.tree.item(iid, "values")[0]) for iid in win.tree.get_children()]
 
 
+def row_of(win, filename):
+    """Строка таблицы по имени файла (порядок строк зависит от сортировки «сомнительные первыми»)."""
+    for iid in win.tree.get_children():
+        if win.tree.item(iid, "text").strip() == filename:
+            return win.tree.item(iid, "values")
+    raise AssertionError(filename)
+
+
 def test_preview_is_built(batch):
     win, root_dir = batch
     assert win.model is not None and len(win.categories) == 4
@@ -69,14 +77,16 @@ def select_row(win, position):
 
 def test_manual_category_and_exclude(batch):
     win, _ = batch
+    first = win.tree.item(win.tree.get_children()[0], "text").strip()
     select_row(win, 0)
     win.apply_category("Кабель HDMI")
-    assert rows(win)[0][1] == "Кабель HDMI.JPG"
-    assert win.tree.item(win.tree.get_children()[0], "values")[2] == "выбрано вручную"
+    assert row_of(win, first)[0] == "Кабель HDMI.JPG"
+    assert row_of(win, first)[2] == "выбрано вручную"
 
-    select_row(win, 1)
+    second = win.tree.item(win.tree.get_children()[0], "text").strip()
+    select_row(win, 0)
     win.exclude_selected()
-    assert rows(win)[1][1] == "— не переименовывать —"
+    assert row_of(win, second)[0] == "— не переименовывать —"
 
 
 def test_candidate_buttons_shown(batch):
@@ -140,3 +150,46 @@ def test_only_doubtful_filter(batch):
     win.only_doubtful.set(False)
     win.render_rows()
     assert len(win.tree.get_children()) == total
+
+
+def test_doubtful_rows_come_first(batch):
+    win, _ = batch
+    from photo_renamer import matcher
+
+    doubtful = win.match.photos[3]
+    doubtful.status = matcher.STATUS_CHECK
+    win.render_rows()
+    assert win.tree.item(win.tree.get_children()[0], "text").strip() == doubtful.filename
+
+    win.sort_doubtful.set(False)          # выключаем — возвращается порядок съёмки
+    win.render_rows()
+    order = [win.tree.item(iid, "text").strip() for iid in win.tree.get_children()]
+    assert order == [p.filename for p in win.match.photos]
+
+
+def test_candidate_hotkeys(batch):
+    win, _ = batch
+    iid = win.tree.get_children()[0]
+    win.tree.selection_set(iid)
+    win._on_row_select()
+    filename = win.tree.item(iid, "text").strip()
+    photo = next(p for p in win.match.photos if p.filename == filename)
+    second = photo.candidates[1].category
+
+    next_filename = win.tree.item(win.tree.get_children()[1], "text").strip()
+    win.apply_candidate(2)                 # клавиша «2» — второй кандидат
+    assert row_of(win, filename)[0].startswith(second)
+    assert row_of(win, filename)[2] == "выбрано вручную"
+    # выделение перешло к следующей по таблице строке (той, что была под исправленной)
+    assert win.tree.selection()
+    assert win.tree.item(win.tree.selection()[0], "text").strip() == next_filename
+
+
+def test_hotkey_without_such_candidate_does_nothing(batch):
+    win, _ = batch
+    select_row(win, 0)
+    before = rows(win)
+    win.apply_candidate(3)
+    photo = win.match.photos[0]
+    if len(photo.candidates) < 3:
+        assert rows(win) == before
