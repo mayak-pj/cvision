@@ -89,8 +89,12 @@ def test_build_creates_distribution(tmp_path, parts):
     assert (site_packages / "PIL" / "__init__.py").exists()
     assert (site_packages / "scipy" / "__init__.py").exists()
 
-    assert (python_dir / "_tkinter.pyd").exists() and (python_dir / "tcl" / "init.tcl").exists()
+    # раскладка как в обычной установке Python: DLLs\ рядом с tcl\ — тогда Tcl находит файлы сам
+    assert (python_dir / "DLLs" / "_tkinter.pyd").exists()
+    assert (python_dir / "DLLs" / "tcl86t.dll").exists()
+    assert (python_dir / "tcl" / "init.tcl").exists()
     assert (python_dir / "Lib" / "tkinter" / "init.tcl").exists()
+    assert "DLLs" in pth.split()
 
     assert (out / "run.py").exists() and (out / "src" / "photo_renamer" / "matcher.py").exists()
     assert not list((out / "src").rglob("__pycache__"))
@@ -160,8 +164,8 @@ def test_optional_zlib_is_not_required(tmp_path, parts):
 
     out = tmp_path / "out"
     build_portable.build(embed, wheels, tk_from, out, ROOT)
-    assert (out / "python" / "_tkinter.pyd").exists()
-    assert not (out / "python" / "zlib1.dll").exists()
+    assert (out / "python" / "DLLs" / "_tkinter.pyd").exists()
+    assert not (out / "python" / "DLLs" / "zlib1.dll").exists()
 
 
 def test_missing_required_tk_file_is_an_error(tmp_path, parts):

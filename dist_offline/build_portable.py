@@ -36,11 +36,14 @@ PROJECT_DIRS = ["src"]
 # zlib1.dll есть не во всех сборках Python: официальная с python.org его содержит,
 # а, например, сборка раннеров GitHub — нет, и tkinter там работает без него.
 # Поэтому он копируется, только если найден.
+# Раскладка повторяет обычную установку Python: библиотеки Tcl/Tk лежат в DLLs\, а их файлы —
+# в tcl\ рядом. При такой раскладке Tcl находит свои файлы сам, относительно своей DLL,
+# и не нужны переменные окружения (с путём, где есть кириллица, они портятся).
 TK_FILES = [
-    ("DLLs/_tkinter.pyd", "_tkinter.pyd", True),
-    ("DLLs/tcl86t.dll", "tcl86t.dll", True),
-    ("DLLs/tk86t.dll", "tk86t.dll", True),
-    ("DLLs/zlib1.dll", "zlib1.dll", False),
+    ("DLLs/_tkinter.pyd", "DLLs/_tkinter.pyd", True),
+    ("DLLs/tcl86t.dll", "DLLs/tcl86t.dll", True),
+    ("DLLs/tk86t.dll", "DLLs/tk86t.dll", True),
+    ("DLLs/zlib1.dll", "DLLs/zlib1.dll", False),
 ]
 TK_DIRS = [("Lib/tkinter", "Lib/tkinter"), ("tcl", "tcl")]
 LAUNCHER = """@echo off
@@ -57,11 +60,13 @@ pause
 # Содержимое python38._pth: пути поиска модулей для embeddable Python.
 # «import site» обязателен, иначе не подхватятся пакеты из Lib\site-packages;
 # «Lib» нужен сам по себе — там лежит tkinter (без этой строки окно не запускается);
+# «DLLs» — там _tkinter.pyd и библиотеки Tcl/Tk;
 # «..\src» — код программы. Файл читается как ASCII, поэтому без комментариев по-русски.
 PTH_CONTENT = """python38.zip
 .
 ..
 ..\\src
+DLLs
 Lib
 Lib\\site-packages
 import site
@@ -140,6 +145,7 @@ def extract_wheels(wheels: Path, site_packages: Path) -> int:
 
 
 def copy_tkinter(tk_from: Path, python_dir: Path) -> None:
+    (python_dir / "DLLs").mkdir(exist_ok=True)
     for source, target, required in TK_FILES:
         path = tk_from / source
         if path.is_file():
