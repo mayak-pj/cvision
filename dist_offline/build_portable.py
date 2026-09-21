@@ -63,6 +63,15 @@ import site
 """
 
 
+def _safe_console() -> None:
+    """Русский текст не должен ронять скрипт в консоли с другой кодировкой (cp1252 и т.п.)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 class BuildError(Exception):
     pass
 
@@ -175,6 +184,7 @@ def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path) ->
 
 
 def main(argv=None) -> int:
+    _safe_console()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--embed", required=True, help="архив python-3.8.10-embed-amd64.zip")
     parser.add_argument("--wheels", required=True, help="папка с .whl (см. download_wheels.py)")

@@ -115,6 +115,11 @@ def settings():
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):   # чтобы кодировка консоли не роняла вывод
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
     print("Проверка портативной сборки\n" + "-" * 62)
     check("Windows", windows_version)
     check("Python", python_version)

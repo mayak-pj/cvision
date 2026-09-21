@@ -122,3 +122,26 @@ def test_download_command_targets_windows_python38(tmp_path):
     line = " ".join(module.command(ROOT / "requirements.txt", tmp_path))
     assert "--only-binary=:all:" in line
     assert "--python-version 38" in line and "--platform win_amd64" in line
+
+
+def test_console_output_survives_limited_encoding(tmp_path):
+    """Русский текст не должен ронять скрипты в консоли без кириллицы (cp1252 в CI, cp866 на Windows)."""
+    import io
+    import sys
+
+    from photo_renamer import console
+
+    class Cp1252Stream(io.TextIOWrapper):
+        pass
+
+    buffer = io.BytesIO()
+    stream = io.TextIOWrapper(buffer, encoding="cp1252", newline="")
+    original = sys.stdout
+    sys.stdout = stream
+    try:
+        console.setup()
+        print("Скачано файлов: 3")          # без настройки здесь было бы UnicodeEncodeError
+        stream.flush()
+    finally:
+        sys.stdout = original
+    assert b"?" in buffer.getvalue()        # кириллица заменена, программа не упала

@@ -17,6 +17,7 @@ import time
 from typing import List, Optional
 
 from . import config as cfg
+from . import console
 from . import grouping, oplog, renamer
 from .cache import PhotoCache
 from .matcher import ReferenceModel, match_folder
@@ -153,6 +154,7 @@ def run_rollback(log_path: str, config: cfg.AppConfig, folder: Optional[str] = N
 
 
 def main(argv=None):
+    console.setup()
     parser = argparse.ArgumentParser(prog="run.py", description="Переименование фото комплектующих по эталону")
     parser.add_argument("targets", nargs="*", help="папка проекта или папки с серийными номерами")
     parser.add_argument("--reference", "-r", help="эталонная папка")

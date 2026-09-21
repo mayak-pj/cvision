@@ -17,6 +17,15 @@ PYTHON_VERSION = "38"
 PLATFORM = "win_amd64"
 
 
+def _safe_console() -> None:
+    """Русский текст не должен ронять скрипт в консоли с другой кодировкой (cp1252 и т.п.)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def command(requirements: Path, dest: Path):
     return [sys.executable, "-m", "pip", "download",
             "-r", str(requirements),

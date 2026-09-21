@@ -5,6 +5,10 @@ name: Портативная сборка для Windows 7
 # Раннеров с Windows 7 у GitHub нет, поэтому ЗАПУСК на рабочей машине проверяется вручную
 # (dist_offline/check_install.py).
 
+env:
+  PYTHONUTF8: "1"           # в журнале Actions русский текст читается, а не падает
+  PYTHONIOENCODING: "utf-8"
+
 on:
   workflow_dispatch:        # запуск кнопкой на вкладке Actions
   push:
