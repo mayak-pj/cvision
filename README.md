@@ -128,13 +128,13 @@ python run.py
 
 ```bat
 rem Проверка без переименования: отчёт на экране и в logs\
-python run.py --reference "\\server\share\Проект\Эталон" "\\server\share\Проект"
+python run.py --reference "Z:\Проект\Эталон" "Z:\Проект"
 
 rem Переименование: по каждой папке показывается отчёт и задаётся вопрос [д/н]
-python run.py --reference "...\Эталон" "...\Проект" --apply
+python run.py --reference "Z:\Проект\Эталон" "Z:\Проект" --apply
 
 rem Анализ проекта: группы похожих папок и какие эталоны нужны
-python run.py --groups "\\server\share\Проект"
+python run.py --groups "Z:\Проект"
 
 rem Откат по логу запуска
 python run.py --rollback "logs\2026-09-18_14-30-05_Проект.csv"
@@ -163,6 +163,32 @@ PYTHONPATH=src .venv/bin/python -m photo_renamer.matcher <эталон> <пап�
 .venv/bin/python tools/make_labels.py -r <эталон> <папка> [...] --out "logs/разметка/файл.xlsx"
 .venv/bin/python tools/evaluate_labels.py -r <эталон> "logs/разметка/файл.xlsx" [--grid]
 ```
+
+## Проверка перед публикацией
+
+Репозиторий рассчитан на публикацию, поэтому рабочие данные в него не попадают:
+фото, логи, таблицы разметки, кэш, `config.json` и `names.txt` исключены в `.gitignore`.
+
+```bash
+python scripts/check_before_push.py
+```
+
+Скрипт проверяет файлы под версионным контролем и сообщения коммитов: запрещённые типы файлов
+(фото, сканы, логи, таблицы), сетевые пути Windows, IP-адреса, почту на непубличных доменах
+и слова-маркеры. Находки печатаются с замаскированной серединой, код возврата ненулевой.
+
+Свои конфиденциальные слова (организация, изделия, серверы, фамилии) держите
+в `scripts/sensitive_terms.local.txt` — этот файл не версионируется.
+Публикуемый `scripts/sensitive_terms.txt` содержит только пояснения и примеры.
+
+Чтобы проверка выполнялась автоматически перед каждым `git push`:
+
+```bash
+cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+Хуки не версионируются, поэтому команду нужно выполнить в каждой копии репозитория.
+Разовый обход при ложной тревоге: `git push --no-verify`.
 
 ## Разработка
 

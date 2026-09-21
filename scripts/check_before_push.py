@@ -42,7 +42,9 @@ PUBLIC_MAIL_DOMAINS = {
 }
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
-UNC_RE = re.compile(r"\\\\[A-Za-z0-9_.\-]+\\[A-Za-z0-9_.\-]+")
+UNC_RE = re.compile(r"\\\\([A-Za-z0-9_.\-]+)\\[A-Za-z0-9_.\-]+")
+# Явно вымышленные имена серверов из примеров и тестов — не находка
+PLACEHOLDER_HOSTS = {"server", "share", "example", "host", "сервер", "myserver", "fileserver"}
 IP_RE = re.compile(r"(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.])")
 MAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})")
 VERSION_HINT_RE = re.compile(r"==|версия|version|\bv\d", re.IGNORECASE)
@@ -104,7 +106,8 @@ def scan_text(text: str, terms, skip_ip=False):
     lowered_terms = [(t, t.casefold()) for t in terms]
     for number, line in enumerate(text.splitlines(), start=1):
         for match in UNC_RE.finditer(line):
-            findings.append((number, "сетевой путь Windows", match.group(0)))
+            if match.group(1).casefold() not in PLACEHOLDER_HOSTS:
+                findings.append((number, "сетевой путь Windows", match.group(0)))
         if not skip_ip and not VERSION_HINT_RE.search(line):
             for match in IP_RE.finditer(line):
                 if all(int(part) <= 255 for part in match.groups()):
