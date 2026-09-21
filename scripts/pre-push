@@ -1,0 +1,16 @@
+#!/bin/sh
+# Git-хук: запрещает push, если проверка нашла признаки рабочих данных.
+#
+# Хуки не версионируются, поэтому включается вручную, по одному на каждую копию репозитория:
+#     cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# Выключить:
+#     rm .git/hooks/pre-push
+# Разовый обход (если уверены, что находка — ложная):
+#     git push --no-verify
+
+python3 "$(git rev-parse --show-toplevel)/scripts/check_before_push.py" || {
+    echo ""
+    echo "Push остановлен: проверка нашла возможные рабочие данные (см. список выше)."
+    echo "Исправьте находки или запустите push с --no-verify, если это ложная тревога."
+    exit 1
+}
