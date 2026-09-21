@@ -47,8 +47,12 @@ python dist_offline\download_wheels.py --dest dist_offline\wheels
 права администратора не нужны). Запомните папку установки, например
 `C:\Users\Вы\AppData\Local\Programs\Python\Python38`.
 
-Оттуда берутся: `DLLs\_tkinter.pyd`, `DLLs\tcl86t.dll`, `DLLs\tk86t.dll`, `DLLs\zlib1.dll`,
-`Lib\tkinter`, `tcl`. Копирует их сборщик, вручную ничего делать не нужно.
+Оттуда берутся: `DLLs\_tkinter.pyd`, `DLLs\tcl86t.dll`, `DLLs\tk86t.dll`, `Lib\tkinter`, `tcl`.
+Копирует их сборщик, вручную ничего делать не нужно.
+
+`DLLs\zlib1.dll` копируется, если он есть: в установке с python.org он присутствует,
+а в некоторых сборках (например, у раннеров GitHub) его нет, и tkinter работает без него.
+После копирования сборщик проверяет, что все обязательные файлы на месте.
 
 ## Шаг 3. Сборка
 

@@ -35,7 +35,7 @@ def parts(tmp_path):
             archive.writestr(payload, "# заглушка\n")
 
     tk_from = tmp_path / "Python38"
-    for name, _ in build_portable.TK_FILES:
+    for name, _, _required in build_portable.TK_FILES:
         path = tk_from / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\x00")
@@ -145,3 +145,24 @@ def test_console_output_survives_limited_encoding(tmp_path):
     finally:
         sys.stdout = original
     assert b"?" in buffer.getvalue()        # кириллица заменена, программа не упала
+
+
+def test_optional_zlib_is_not_required(tmp_path, parts):
+    """zlib1.dll есть не во всех сборках Python (например, его нет у раннеров GitHub),
+    и tkinter там работает без него."""
+    embed, wheels, tk_from = parts
+    (tk_from / "DLLs" / "zlib1.dll").unlink()
+    build_portable.check_inputs(embed, wheels, tk_from)          # не ошибка
+    assert "необязательных файлов нет" in build_portable.plan(embed, wheels, tk_from, tmp_path / "out")
+
+    out = tmp_path / "out"
+    build_portable.build(embed, wheels, tk_from, out, ROOT)
+    assert (out / "python" / "_tkinter.pyd").exists()
+    assert not (out / "python" / "zlib1.dll").exists()
+
+
+def test_missing_required_tk_file_is_an_error(tmp_path, parts):
+    embed, wheels, tk_from = parts
+    (tk_from / "DLLs" / "tk86t.dll").unlink()
+    with pytest.raises(build_portable.BuildError, match="tk86t"):
+        build_portable.check_inputs(embed, wheels, tk_from)

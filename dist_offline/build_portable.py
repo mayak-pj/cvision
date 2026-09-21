@@ -32,12 +32,15 @@ from pathlib import Path
 
 PROJECT_FILES = ["run.py", "config.example.json", "names.example.txt"]
 PROJECT_DIRS = ["src"]
-# Файлы tkinter, которых нет в embeddable-дистрибутиве
+# Файлы tkinter, которых нет в embeddable-дистрибутиве.
+# zlib1.dll есть не во всех сборках Python: официальная с python.org его содержит,
+# а, например, сборка раннеров GitHub — нет, и tkinter там работает без него.
+# Поэтому он копируется, только если найден.
 TK_FILES = [
-    ("DLLs/_tkinter.pyd", "_tkinter.pyd"),
-    ("DLLs/tcl86t.dll", "tcl86t.dll"),
-    ("DLLs/tk86t.dll", "tk86t.dll"),
-    ("DLLs/zlib1.dll", "zlib1.dll"),
+    ("DLLs/_tkinter.pyd", "_tkinter.pyd", True),
+    ("DLLs/tcl86t.dll", "tcl86t.dll", True),
+    ("DLLs/tk86t.dll", "tk86t.dll", True),
+    ("DLLs/zlib1.dll", "zlib1.dll", False),
 ]
 TK_DIRS = [("Lib/tkinter", "Lib/tkinter"), ("tcl", "tcl")]
 LAUNCHER = """@echo off
@@ -82,7 +85,7 @@ def check_inputs(embed: Path, wheels: Path, tk_from: Path) -> None:
     if not wheels.is_dir() or not list(wheels.glob("*.whl")):
         raise BuildError("В папке %s нет ни одного файла .whl" % wheels)
     if tk_from is not None:
-        missing = [name for name, _ in TK_FILES if not (tk_from / name).is_file()]
+        missing = [name for name, _, required in TK_FILES if required and not (tk_from / name).is_file()]
         missing += [name for name, _ in TK_DIRS if not (tk_from / name).is_dir()]
         if missing:
             raise BuildError("В установке Python (%s) не найдено: %s" % (tk_from, ", ".join(missing)))
@@ -112,6 +115,10 @@ def plan(embed: Path, wheels: Path, tk_from: Path, out: Path):
              "Библиотеки (%d):" % len(wheel_list(wheels))]
     lines += ["    " + wheel.name for wheel in wheel_list(wheels)]
     lines.append("Файлы tkinter: %s" % ("из " + str(tk_from) if tk_from else "НЕ КОПИРУЮТСЯ (окно не запустится)"))
+    if tk_from is not None:
+        optional = [name for name, _, required in TK_FILES if not required and not (tk_from / name).is_file()]
+        if optional:
+            lines.append("    необязательных файлов нет (обычно не мешает): " + ", ".join(optional))
     lines.append("Код программы: " + ", ".join(PROJECT_DIRS + PROJECT_FILES))
     bad = wrong_platform_wheels(wheels)
     if bad:
@@ -131,13 +138,26 @@ def extract_wheels(wheels: Path, site_packages: Path) -> int:
 
 
 def copy_tkinter(tk_from: Path, python_dir: Path) -> None:
-    for source, target in TK_FILES:
-        shutil.copy2(tk_from / source, python_dir / target)
+    for source, target, required in TK_FILES:
+        path = tk_from / source
+        if path.is_file():
+            shutil.copy2(path, python_dir / target)
+        elif required:
+            raise BuildError("Не найден файл tkinter: %s" % path)
     for source, target in TK_DIRS:
         destination = python_dir / target
         if destination.exists():
             shutil.rmtree(destination)
         shutil.copytree(tk_from / source, destination)
+
+
+def verify_tkinter(python_dir: Path) -> None:
+    """После копирования проверяем, что окно будет чем запускать."""
+    missing = [target for _, target, required in TK_FILES
+               if required and not (python_dir / target).is_file()]
+    missing += [target for _, target in TK_DIRS if not (python_dir / target).is_dir()]
+    if missing:
+        raise BuildError("В собранном Python не хватает файлов tkinter: %s" % ", ".join(missing))
 
 
 def copy_project(project: Path, out: Path) -> None:
@@ -174,6 +194,8 @@ def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path) ->
     extracted = extract_wheels(wheels, python_dir / "Lib" / "site-packages")
     if tk_from is not None:
         copy_tkinter(tk_from, python_dir)
+    if tk_from is not None:
+        verify_tkinter(python_dir)
     copy_project(project, out)
     write_launchers(out)
     shutil.copy2(project / "dist_offline" / "Инструкция.txt", out / "Инструкция.txt")
