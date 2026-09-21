@@ -15,6 +15,7 @@ from ..cache import PhotoCache
 from ..names import NamesList
 from ..reference import is_template_name, load_reference
 from ..scanner import list_photos
+from . import theme
 from .thumbgrid import MAX_SIZE, MIN_SIZE, ThumbnailGrid, to_photo
 
 TITLE = "Эталон"
@@ -33,10 +34,13 @@ class ReferenceEditor(tk.Toplevel):
         self.history: List[List[renamer.RenameItem]] = []
 
         self.title("%s: %s" % (TITLE, folder))
-        self.geometry("1250x780")
         self.minsize(900, 560)
+        theme.fit_to_screen(self)     # не под заголовком окна: иначе верхняя панель перекрыта
+        self.transient(master)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._build()
+        self.lift()
+        self.focus_force()
         self._load_folder()
         self._learn_from_reference()
         self.bind("<Control-z>", lambda e: self.undo())

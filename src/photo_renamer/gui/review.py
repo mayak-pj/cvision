@@ -15,6 +15,7 @@ from .. import grouping, matcher, names as names_mod, oplog, renamer
 from ..cache import PhotoCache
 from ..reference import category_key, load_reference
 from ..report import build_report, format_report
+from . import theme
 from .thumbgrid import to_photo
 
 TITLE = "Переименование папок"
@@ -58,8 +59,9 @@ class BatchWindow(tk.Toplevel):
         self._last_plan: Optional[renamer.RenamePlan] = None
 
         self.title(TITLE)
-        self.geometry("1250x800")
         self.minsize(900, 600)
+        theme.fit_to_screen(self)
+        self.transient(master)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._build()
         self.after(50, self.start)
@@ -95,9 +97,10 @@ class BatchWindow(tk.Toplevel):
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
-        self.tree.tag_configure("doubt", foreground="#B45309")
-        self.tree.tag_configure("manual", foreground="#1D4ED8")
-        self.tree.tag_configure("skip", foreground="#6B7280")
+        palette = theme.colors()
+        self.tree.tag_configure("doubt", foreground=palette["warning"])
+        self.tree.tag_configure("manual", foreground=palette["accent"])
+        self.tree.tag_configure("skip", foreground=palette["muted"])
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_row_select())
         for number in range(1, 4):  # 1, 2, 3 — выбрать кандидата с этим номером
             self.tree.bind("<Key-%d>" % number, lambda e, n=number: self.apply_candidate(n))

@@ -11,9 +11,13 @@
 
 import base64
 import io
+import time
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, List, Optional, Sequence, Tuple
+
+LOAD_BUDGET = 0.05   # столько секунд подряд грузим миниатюры, затем отдаём время событиям
+LOAD_PAUSE = 15      # пауза между пачками, мс: за неё обрабатываются щелчки и прокрутка
 
 GAP = 12
 LABEL_HEIGHT = 34
@@ -96,20 +100,24 @@ class ThumbnailGrid(ttk.Frame):
     def selected_names(self) -> List[str]:
         return [self.items[i][0] for i in sorted(self.selection)]
 
-    def select_all(self) -> None:
-        self.selection = set(range(len(self.items)))
-        self._layout()
+    def _apply_selection(self, new_selection: set) -> None:
+        """Перерисовывает только те ячейки, у которых изменилось выделение (полная перерисовка
+        сетки на каждый щелчок заметно тормозит на папках в сотни фото)."""
+        changed = self.selection ^ new_selection
+        self.selection = new_selection
+        for index in changed:
+            if 0 <= index < len(self.items):
+                self._draw_cell(index)
         self._notify()
+
+    def select_all(self) -> None:
+        self._apply_selection(set(range(len(self.items))))
 
     def clear_selection(self) -> None:
-        self.selection.clear()
-        self._layout()
-        self._notify()
+        self._apply_selection(set())
 
     def set_selection(self, indexes: Sequence[int]) -> None:
-        self.selection = {i for i in indexes if 0 <= i < len(self.items)}
-        self._layout()
-        self._notify()
+        self._apply_selection({i for i in indexes if 0 <= i < len(self.items)})
 
     def set_cell_size(self, size: int) -> None:
         size = max(MIN_SIZE, min(MAX_SIZE, int(size)))
@@ -128,23 +136,32 @@ class ThumbnailGrid(ttk.Frame):
         self._load_next()
 
     def _load_next(self) -> None:
+        """Грузит миниатюры пачкой не дольше LOAD_BUDGET, затем обязательно отдаёт время событиям.
+
+        Одно фото весит ~15 МБ, и его чтение по сети может занять секунды. Пауза между пачками
+        нужна, чтобы щелчки и прокрутка обрабатывались, а не ждали окончания загрузки.
+        """
         self._loader = None
-        while self._pending < len(self.items) and self._images[self._pending] is not None:
+        deadline = time.monotonic() + LOAD_BUDGET
+        while True:
+            while self._pending < len(self.items) and self._images[self._pending] is not None:
+                self._pending += 1
+            if self._pending >= len(self.items):
+                if self.on_load_progress:
+                    self.on_load_progress(len(self.items), len(self.items))
+                return
+            index = self._pending
+            try:
+                self._images[index] = self.load_thumbnail(self.items[index][1])
+            except Exception:  # нечитаемое фото не должно ломать сетку
+                self._images[index] = False
             self._pending += 1
-        if self._pending >= len(self.items):
+            self._draw_cell(index)
             if self.on_load_progress:
-                self.on_load_progress(len(self.items), len(self.items))
-            return
-        index = self._pending
-        try:
-            self._images[index] = self.load_thumbnail(self.items[index][1])
-        except Exception:  # нечитаемое фото не должно ломать сетку
-            self._images[index] = False
-        self._pending += 1
-        self._draw_cell(index)
-        if self.on_load_progress:
-            self.on_load_progress(self._pending, len(self.items))
-        self._loader = self.after(1, self._load_next)
+                self.on_load_progress(self._pending, len(self.items))
+            if time.monotonic() >= deadline:
+                break
+        self._loader = self.after(LOAD_PAUSE, self._load_next)
 
     # --- раскладка и рисование ---------------------------------------------------------
 
@@ -210,15 +227,14 @@ class ThumbnailGrid(ttk.Frame):
             return
         if shift and self._anchor is not None:
             low, high = sorted((self._anchor, index))
-            self.selection = set(range(low, high + 1)) | (self.selection if ctrl else set())
+            new_selection = set(range(low, high + 1)) | (self.selection if ctrl else set())
         elif ctrl:
-            self.selection.symmetric_difference_update({index})
+            new_selection = self.selection ^ {index}
             self._anchor = index
         else:
-            self.selection = {index}
+            new_selection = {index}
             self._anchor = index
-        self._layout()
-        self._notify()
+        self._apply_selection(new_selection)
 
     def _on_drag(self, event) -> None:
         if self._drag is None:
@@ -234,11 +250,8 @@ class ThumbnailGrid(ttk.Frame):
             cx0, cy0, cx1, cy1 = self._cell_box(index)
             if not (cx1 < box[0] or cx0 > box[2] or cy1 < box[1] or cy0 > box[3]):
                 inside.add(index)
-        self.selection = self._drag_base | inside
-        for index in range(len(self.items)):
-            self._draw_cell(index)
+        self._apply_selection(self._drag_base | inside)
         self.canvas.tag_raise(self._drag_rect)
-        self._notify()
 
     def _on_release(self, event) -> None:
         if self._drag_rect is not None:

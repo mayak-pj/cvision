@@ -16,6 +16,7 @@ from .. import config as cfg
 from .. import grouping
 from ..cache import PhotoCache
 from ..names import NamesList
+from . import theme
 from .editor import ReferenceEditor
 from .review import BatchWindow
 
@@ -48,6 +49,8 @@ class MainWindow(tk.Tk):
         self._item_folder: Dict[str, grouping.FolderInfo] = {}
         self._item_group: Dict[str, int] = {}
 
+        theme.apply(self, app_config.theme)
+        self.palette = theme.colors()
         self.title(TITLE)
         self.geometry("1150x650")
         self.minsize(850, 450)
@@ -76,7 +79,8 @@ class MainWindow(tk.Tk):
 
         hint = ("Программа находит все папки с фото, сравнивает их и объединяет похожие в группы. "
                 "Для каждой группы нужен один эталон — папка, переименованная по шаблону.")
-        ttk.Label(self, text=hint, foreground="#555555", padding=(10, 0, 10, 6), wraplength=1100).pack(fill="x")
+        ttk.Label(self, text=hint, foreground=self.palette["muted"], padding=(10, 0, 10, 6),
+                  wraplength=1100).pack(fill="x")
 
         middle = ttk.Frame(self, padding=(10, 0, 10, 0))
         middle.pack(fill="both", expand=True)
@@ -103,8 +107,8 @@ class MainWindow(tk.Tk):
         bold.configure(weight="bold")
         self.tree.tag_configure("group", font=bold)
         self.tree.tag_configure("reference", font=bold)
-        self.tree.tag_configure("not_ready", foreground="#B45309")
-        self.tree.tag_configure("low", foreground="#B91C1C")
+        self.tree.tag_configure("not_ready", foreground=self.palette["warning"])
+        self.tree.tag_configure("low", foreground=self.palette["error"])
 
         side = ttk.Frame(middle, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
