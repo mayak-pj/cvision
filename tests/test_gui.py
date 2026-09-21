@@ -50,6 +50,7 @@ def folder_rows(win):
 def test_analyze_and_render(window, project):
     window.root_var.set(str(project))
     window.analyze()
+    window.wait_for_worker()
     assert window.analysis is not None and not window._busy
     groups = window.tree.get_children()
     assert len(groups) == 2
@@ -75,6 +76,7 @@ def select(window, suffix):
 def test_buttons_follow_selection(window, project):
     window.root_var.set(str(project))
     window.analyze()
+    window.wait_for_worker()
     assert str(window.reference_btn["state"]) == "disabled"
     select(window, "SN2")
     assert str(window.reference_btn["state"]) == "normal"
@@ -86,6 +88,7 @@ def test_buttons_follow_selection(window, project):
 def test_make_reference_and_move(window, project):
     window.root_var.set(str(project))
     window.analyze()
+    window.wait_for_worker()
     folder = select(window, "SN4")
     window.make_reference()
     assert window.analysis.groups[1].reference is folder
@@ -100,6 +103,7 @@ def test_make_reference_and_move(window, project):
 def test_refresh_after_manual_rename(window, project):
     window.root_var.set(str(project))
     window.analyze()
+    window.wait_for_worker()
     folder = select(window, "SN5")
     names = ["Кулер.JPG", "Вентилятор 1.JPG", "Вентилятор 2.JPG", "Кабель HDMI.JPG", "Радиатор 1.JPG",
              "Радиатор 2.JPG", "Плата фото 1.JPG", "Плата фото 2.JPG"]
@@ -112,14 +116,69 @@ def test_refresh_after_manual_rename(window, project):
 def test_missing_folder_and_cancel(window, tmp_path, project):
     window.root_var.set(str(tmp_path / "нет"))
     window.analyze()
+    window.wait_for_worker()
     assert window.analysis is None
     window.root_var.set(str(project))
-    original = window._on_progress
+    original = window._on_worker_message
 
-    def cancel_on_first(done, total):
+    def cancel_on_first(message):      # прерываем, как только пошло чтение фото
         window.cancel()
-        original(done, total)
+        original(message)
 
-    window._on_progress = cancel_on_first
+    window._on_worker_message = cancel_on_first
     window.analyze()
+    window.wait_for_worker()
     assert window.status_var.get() == "Анализ прерван." and not window._busy
+
+
+def test_window_stays_responsive_during_analysis(window, project, monkeypatch):
+    """Чтение фото идёт в фоновой задаче: окно отвечает на действия, пока идёт анализ."""
+    import time
+
+    from photo_renamer.gui import app as app_module
+
+    real = app_module.PhotoCache
+
+    class SlowCache(real):
+        def extract_many(self, extractor, paths, on_progress=None):
+            time.sleep(0.2)            # медленное чтение, как по сети
+            return super().extract_many(extractor, paths, on_progress)
+
+    monkeypatch.setattr(app_module, "PhotoCache", SlowCache)
+    window.root_var.set(str(project))
+    window.analyze()
+    assert window.worker.busy()
+
+    # во время анализа активна кнопка «Прервать» — она и должна отвечать сразу
+    clicks = []
+    window.cancel_btn.configure(command=lambda: clicks.append(1))
+    started = time.perf_counter()
+    window.cancel_btn.event_generate("<Button-1>")
+    window.cancel_btn.event_generate("<ButtonRelease-1>")
+    while not clicks and time.perf_counter() - started < 5:
+        window.update()
+    assert clicks, "кнопка не ответила, пока шёл анализ"
+    assert time.perf_counter() - started < 0.2, "ответ занял больше 200 мс"
+
+    window.wait_for_worker()
+    assert window.analysis is not None
+
+
+def test_lamp_switches_theme_and_remembers(window, tmp_path, monkeypatch):
+    from photo_renamer import config as config_module
+    from photo_renamer.gui import theme
+
+    saved = []
+    monkeypatch.setattr(config_module, "save_config", lambda cfg_, path=None: saved.append(cfg_.theme))
+    monkeypatch.setattr(gui_app.cfg, "save_config", lambda cfg_, path=None: saved.append(cfg_.theme))
+
+    assert window.lamp.on and theme.current_mode() == "light"
+    window.lamp.toggle()                     # погасили лампочку — тёмное оформление
+    assert not window.lamp.on
+    assert theme.current_mode() == "dark"
+    assert window.app_config.theme == "dark" and saved == ["dark"]
+    assert window.cget("background") == theme.DARK["background"]
+
+    window.lamp.toggle()
+    assert theme.current_mode() == "light" and window.app_config.theme == "light"
+    theme.apply(window, "light")

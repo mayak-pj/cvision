@@ -50,7 +50,17 @@ class PhotoCache:
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.path = path
         self.max_bytes = int(max_mb * 1024 * 1024)
-        self._db = sqlite3.connect(path)
+        # К кэшу одновременно обращаются главный поток и фоновая задача (чтение миниатюр).
+        # isolation_level=None — запись фиксируется сразу, иначе открытая транзакция одного
+        # потока блокирует другой; WAL позволяет читать во время записи; synchronous=NORMAL
+        # убирает лишние сбросы на диск при частых мелких записях.
+        self._db = sqlite3.connect(path, timeout=30, isolation_level=None)
+        self._db.execute("PRAGMA busy_timeout = 30000")
+        for pragma in ("PRAGMA journal_mode = WAL", "PRAGMA synchronous = NORMAL"):
+            try:
+                self._db.execute(pragma)
+            except sqlite3.DatabaseError:
+                pass
         self._db.executescript("""
             CREATE TABLE IF NOT EXISTS thumbs (key TEXT PRIMARY KEY, jpeg BLOB, used REAL);
             CREATE TABLE IF NOT EXISTS feats (key TEXT, version TEXT, data BLOB, used REAL,
@@ -60,7 +70,10 @@ class PhotoCache:
         self._writes = 0
 
     def close(self) -> None:
-        self._db.commit()
+        try:
+            self._db.commit()
+        except sqlite3.ProgrammingError:
+            pass
         self._db.close()
 
     # --- чтение одного фото ---------------------------------------------------------

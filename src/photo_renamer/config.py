@@ -32,7 +32,7 @@ class AppConfig:
     logs_dir: str = "logs"
     cache_dir: str = "cache"
     names_file: str = "names.txt"
-    theme: str = "light"       # светлое оформление независимо от системной темы
+    theme: str = "light"       # light | dark | system (переключается лампочкой в окне)
     cache_max_mb: float = 2048
     group_threshold: float = 0.30
 
@@ -116,7 +116,8 @@ _APP_KEYS = {
     "sort": lambda v: None if v in (SORT_BY_NAME, SORT_BY_EXIF) else "допустимо \"name\" или \"exif\"",
     "problem_categories": _check_str_list,
     "logs_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
-    "theme": lambda v: None if v in ("light", "system") else "допустимо \"light\" или \"system\"",
+    "theme": lambda v: None if v in ("light", "dark", "system") else
+             "допустимо \"light\", \"dark\" или \"system\"",
     "names_file": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к файлу",
     "cache_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
     "cache_max_mb": _number(50, 1024 * 1024),

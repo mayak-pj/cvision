@@ -49,3 +49,36 @@ def test_fit_to_screen_keeps_top_margin(root):
     assert int(height) + 60 <= window.winfo_screenheight()
     assert int(width) <= window.winfo_screenwidth()
     window.destroy()
+
+
+def test_dark_theme_and_lamp(root):
+    theme.apply(root, "light")
+    assert theme.current_mode() == "light"
+    lamp = theme.LampButton(root)
+    assert lamp.on and lamp.find_all()          # лампочка нарисована
+
+    toggled = []
+    lamp.command = toggled.append
+    lamp.toggle()
+    assert lamp.on is False and toggled == [False]
+
+    theme.apply(root, "dark")
+    dark = theme.colors()
+    assert theme.current_mode() == "dark"
+    assert dark["background"] == theme.DARK["background"]
+    assert root.cget("background") == dark["background"]
+
+
+def test_apply_to_existing_recolors_open_windows(root):
+    theme.apply(root, "light")
+    window = tk.Toplevel(root)
+    window.withdraw()
+    listbox = tk.Listbox(window)
+    listbox.pack()
+    assert listbox.cget("background") == theme.LIGHT["surface"]
+
+    theme.apply(root, "dark")
+    theme.apply_to_existing(root)
+    assert listbox.cget("background") == theme.DARK["surface"]
+    assert window.cget("background") == theme.DARK["background"]
+    window.destroy()

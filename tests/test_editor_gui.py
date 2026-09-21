@@ -134,3 +134,44 @@ def test_zoom_limits(editor):
     assert win.grid_widget.cell_size == editor_mod.MAX_SIZE
     win.grid_widget.set_cell_size(1)
     assert win.grid_widget.cell_size == editor_mod.MIN_SIZE
+
+
+def test_thumbnails_load_in_background(editor):
+    """Миниатюры читаются фоновой задачей и появляются в сетке, окно при этом не блокируется."""
+    win, folder, _ = editor
+    grid = win.grid_widget
+    assert grid.worker is not None
+    win.worker.wait(30)
+    win.update()
+    assert grid._pending == len(win.photos)
+    assert all(image for image in grid._images), "не все миниатюры загружены"
+    assert "загрузка миниатюр" not in win.status_var.get()
+
+
+def test_editor_answers_clicks_while_thumbnails_load(editor, monkeypatch):
+    import time
+
+    from photo_renamer.gui import editor as editor_module
+
+    win, folder, _ = editor
+    real = editor_module.PhotoCache
+
+    class SlowCache(real):
+        def thumbnail(self, path):
+            time.sleep(0.2)                     # медленное чтение, как по сети
+            return super().thumbnail(path)
+
+    monkeypatch.setattr(editor_module, "PhotoCache", SlowCache)
+    win.grid_widget.set_items(win._items(), win._template_flags())
+    assert win.worker.busy()
+
+    clicks = []
+    win.rename_btn.configure(command=lambda: clicks.append(1))
+    started = time.perf_counter()
+    win.rename_btn.event_generate("<Button-1>")
+    win.rename_btn.event_generate("<ButtonRelease-1>")
+    while not clicks and time.perf_counter() - started < 5:
+        win.update()
+    assert clicks and time.perf_counter() - started < 0.2
+    win.worker.cancel()
+    win.worker.wait(5)

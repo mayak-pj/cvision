@@ -22,10 +22,7 @@ LOAD_PAUSE = 15      # пауза между пачками, мс: за неё �
 GAP = 12
 LABEL_HEIGHT = 34
 MIN_SIZE, MAX_SIZE = 100, 400
-SELECTED_COLOR = "#CCE4FF"
-SELECTED_BORDER = "#3B82F6"
-TEMPLATE_COLOR = "#166534"   # имя уже по шаблону
-PLAIN_COLOR = "#111827"
+from . import theme
 
 
 def to_photo(image, size: int) -> tk.PhotoImage:
@@ -41,9 +38,17 @@ class ThumbnailGrid(ttk.Frame):
     def __init__(self, master, load_thumbnail: Callable[[str], object], cell_size: int = 160,
                  on_selection_change: Optional[Callable[[], None]] = None,
                  on_activate: Optional[Callable[[int], None]] = None,
-                 on_load_progress: Optional[Callable[[int, int], None]] = None, **kwargs):
+                 on_load_progress: Optional[Callable[[int, int], None]] = None,
+                 worker=None, make_loader: Optional[Callable[[], Callable[[str], object]]] = None,
+                 on_load_error: Optional[Callable[[str, str], None]] = None, **kwargs):
+        """worker и make_loader — необязательные: если переданы, миниатюры читаются в фоновой
+        задаче (make_loader вызывается внутри потока и создаёт свой источник, например свой кэш).
+        Без них чтение идёт в главном потоке пачками с паузами."""
         super().__init__(master, **kwargs)
         self.load_thumbnail = load_thumbnail
+        self.on_load_error = on_load_error
+        self.worker = worker
+        self.make_loader = make_loader
         self.cell_size = cell_size
         self.on_selection_change = on_selection_change
         self.on_activate = on_activate
@@ -62,7 +67,7 @@ class ThumbnailGrid(ttk.Frame):
         self._drag_rect = None
         self._drag_base: set = set()
 
-        self.canvas = tk.Canvas(self, background="white", highlightthickness=0, takefocus=True)
+        self.canvas = tk.Canvas(self, background=theme.colors()["surface"], highlightthickness=0, takefocus=True)
         scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scroll.set)
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -133,7 +138,48 @@ class ThumbnailGrid(ttk.Frame):
             self.after_cancel(self._loader)
             self._loader = None
         self._pending = 0
-        self._load_next()
+        if self.worker is not None and self.make_loader is not None:
+            self._start_background_loading()
+        else:
+            self._load_next()
+
+    def _start_background_loading(self) -> None:
+        """Чтение фото — в фоновой задаче, рисование — в главном потоке."""
+        paths = [path for _, path in self.items]
+        if not paths:
+            return
+        if self.worker.busy():
+            self.worker.cancel()
+            self.worker.wait(5)
+
+        def job(post, cancelled):
+            loader = self.make_loader()
+            try:
+                for index, path in enumerate(paths):
+                    if cancelled():
+                        return
+                    try:
+                        post((index, loader(path)))
+                    except Exception as exc:   # нечитаемое фото не должно ломать сетку
+                        post((index, False, str(exc)))
+            finally:
+                close = getattr(loader, "close", None)
+                if close:
+                    close()
+
+        self.worker.start(job, self._on_loaded, lambda result, error: None)
+
+    def _on_loaded(self, message) -> None:
+        index, image = message[0], message[1]
+        if len(message) > 2 and self.on_load_error:
+            self.on_load_error(self.items[index][0] if index < len(self.items) else "", message[2])
+        if index >= len(self._images):
+            return
+        self._images[index] = image
+        self._pending = max(self._pending, index + 1)
+        self._draw_cell(index)
+        if self.on_load_progress:
+            self.on_load_progress(self._pending, len(self.items))
 
     def _load_next(self) -> None:
         """Грузит миниатюры пачкой не дольше LOAD_BUDGET, затем обязательно отдаёт время событиям.
@@ -172,6 +218,7 @@ class ThumbnailGrid(ttk.Frame):
         return x, y, x + self.cell_size, y + self.cell_size + LABEL_HEIGHT
 
     def _layout(self) -> None:
+        self.canvas.configure(background=theme.colors()["surface"])
         width = max(self.canvas.winfo_width(), self.cell_size + 2 * GAP)
         self._columns = max(1, (width - GAP) // (self.cell_size + GAP))
         self.canvas.delete("all")
@@ -187,9 +234,10 @@ class ThumbnailGrid(ttk.Frame):
         x0, y0, x1, y1 = self._cell_box(index)
         tags = ("cell%d" % index, "cell")
         selected = index in self.selection
+        palette = theme.colors()
         self.canvas.create_rectangle(x0 - 4, y0 - 4, x1 + 4, y1 + 4,
-                                     fill=SELECTED_COLOR if selected else "white",
-                                     outline=SELECTED_BORDER if selected else "#E5E7EB", tags=tags)
+                                     fill=palette["select_bg"] if selected else palette["surface"],
+                                     outline=palette["accent"] if selected else palette["border"], tags=tags)
         image = self._images[index] if index < len(self._images) else None
         if image:
             photo = self._photos[index]
@@ -199,10 +247,11 @@ class ThumbnailGrid(ttk.Frame):
             self.canvas.create_image((x0 + x1) // 2, y0 + self.cell_size // 2, image=photo, tags=tags)
         else:
             text = "…" if image is None else "нет\nпревью"
-            self.canvas.create_text((x0 + x1) // 2, y0 + self.cell_size // 2, text=text, fill="#9CA3AF", tags=tags)
+            self.canvas.create_text((x0 + x1) // 2, y0 + self.cell_size // 2, text=text,
+                                    fill=palette["muted"], tags=tags)
         name = self.items[index][0]
         self.canvas.create_text((x0 + x1) // 2, y1 - LABEL_HEIGHT // 2, text=name, width=self.cell_size,
-                                fill=TEMPLATE_COLOR if self.template[index] else PLAIN_COLOR, tags=tags)
+                                fill=palette["ok"] if self.template[index] else palette["text"], tags=tags)
 
     # --- мышь и клавиши ------------------------------------------------------------------
 
@@ -243,7 +292,8 @@ class ThumbnailGrid(ttk.Frame):
         x1, y1 = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
         if self._drag_rect is not None:
             self.canvas.delete(self._drag_rect)
-        self._drag_rect = self.canvas.create_rectangle(x0, y0, x1, y1, outline=SELECTED_BORDER, dash=(3, 2))
+        self._drag_rect = self.canvas.create_rectangle(x0, y0, x1, y1, outline=theme.colors()["accent"],
+                                                       dash=(3, 2))
         box = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
         inside = set()
         for index in range(len(self.items)):

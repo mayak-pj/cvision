@@ -18,13 +18,10 @@ from ..cache import PhotoCache
 from ..names import NamesList
 from . import theme
 from .editor import ReferenceEditor
+from .worker import Cancelled, Worker
 from .review import BatchWindow
 
 TITLE = "Переименование фото комплектующих"
-
-
-class Cancelled(Exception):
-    """Пользователь прервал анализ."""
 
 
 def open_in_file_manager(path: str) -> None:
@@ -34,6 +31,32 @@ def open_in_file_manager(path: str) -> None:
         subprocess.Popen(["open", path])
     else:
         subprocess.Popen(["xdg-open", path])
+
+
+def _tooltip(widget, text: str) -> None:
+    """Подсказка при наведении (у tkinter своей нет)."""
+    tip = {"window": None}
+
+    def show(_event=None):
+        if tip["window"] is not None:
+            return
+        window = tk.Toplevel(widget)
+        window.wm_overrideredirect(True)
+        window.attributes("-topmost", True)
+        palette = theme.colors()
+        tk.Label(window, text=text, background=palette["surface"], foreground=palette["text"],
+                 relief="solid", borderwidth=1, padx=6, pady=3).pack()
+        x = widget.winfo_rootx() + widget.winfo_width() // 2 - 120
+        window.geometry("+%d+%d" % (max(x, 0), widget.winfo_rooty() + widget.winfo_height() + 4))
+        tip["window"] = window
+
+    def hide(_event=None):
+        if tip["window"] is not None:
+            tip["window"].destroy()
+            tip["window"] = None
+
+    widget.bind("<Enter>", show, add="+")
+    widget.bind("<Leave>", hide, add="+")
 
 
 class MainWindow(tk.Tk):
@@ -48,6 +71,7 @@ class MainWindow(tk.Tk):
         self._close_requested = False
         self._item_folder: Dict[str, grouping.FolderInfo] = {}
         self._item_group: Dict[str, int] = {}
+        self.worker = Worker(self)
 
         theme.apply(self, app_config.theme)
         self.palette = theme.colors()
@@ -76,6 +100,10 @@ class MainWindow(tk.Tk):
         self.browse_btn.pack(side="left")
         self.analyze_btn = ttk.Button(top, text="Анализировать", command=self.analyze)
         self.analyze_btn.pack(side="left", padx=(6, 0))
+        self.lamp = theme.LampButton(top, command=self.on_lamp)
+        self.lamp.set(self.app_config.theme != "dark")
+        self.lamp.pack(side="left", padx=(10, 0))
+        _tooltip(self.lamp, "Оформление: лампочка горит — светлое, погашена — тёмное")
 
         hint = ("Программа находит все папки с фото, сравнивает их и объединяет похожие в группы. "
                 "Для каждой группы нужен один эталон — папка, переименованная по шаблону.")
@@ -138,6 +166,26 @@ class MainWindow(tk.Tk):
         self.cancel_btn = ttk.Button(bottom, text="Прервать", command=self.cancel)
         self.progress = ttk.Progressbar(bottom, length=260, mode="determinate")
 
+    def on_lamp(self, lit: bool) -> None:
+        """Лампочка горит — светлое оформление, погашена — тёмное. Выбор запоминается."""
+        mode = "light" if lit else "dark"
+        self.app_config.theme = mode
+        theme.apply(self, mode)
+        self.palette = theme.colors()
+        theme.apply_to_existing(self)
+        for window in self.winfo_children():      # уже открытые окна редактора и переименования
+            if isinstance(window, tk.Toplevel):
+                window.configure(background=self.palette["background"])
+                theme.apply_to_existing(window)
+        self.tree.tag_configure("not_ready", foreground=self.palette["warning"])
+        self.tree.tag_configure("low", foreground=self.palette["error"])
+        self.lamp.redraw()
+        self.render()
+        try:
+            cfg.save_config(self.app_config)
+        except OSError as exc:
+            self.status_var.set("Не удалось сохранить настройки: %s" % exc)
+
     # --- состояние между запусками ----------------------------------------------------------
 
     def _state_path(self) -> str:
@@ -179,24 +227,12 @@ class MainWindow(tk.Tk):
             self.cancel_btn.pack_forget()
         self._update_buttons()
 
-    def _pump(self) -> None:
-        self.update()
-        if self._cancel:
-            raise Cancelled()
-
-    def _on_folder(self, n: int, total: int, path: str) -> None:
-        self.status_var.set("Папка %d из %d: %s" % (n, total, self._display_path(path)))
-        self.progress.configure(maximum=1, value=0)
-        self._pump()
-
-    def _on_progress(self, done: int, total: int) -> None:
-        self.progress.configure(maximum=max(total, 1), value=done)
-        self._pump()
-
     def cancel(self) -> None:
         self._cancel = True
+        self.worker.cancel()
 
     def analyze(self) -> None:
+        """Анализ проекта. Чтение фото идёт в фоновой задаче, поэтому окно остаётся отзывчивым."""
         if self._busy:
             return
         root = self.root_var.get().strip()
@@ -207,33 +243,57 @@ class MainWindow(tk.Tk):
         self._save_state()
         self._set_busy(True)
         self.status_var.set("Поиск папок с фото…")
-        self._pump_safe()
-        cache = PhotoCache(self.app_config.cache_path(), self.app_config.cache_max_mb)
-        try:
-            self.analysis = grouping.analyze_project(
-                [root], self.app_config.extractor(), self.app_config.match.weights,
-                self.app_config.group_threshold, feature_source=cache.extract_many, sort=self.app_config.sort,
-                date_source=cache.shot_time,
-                on_folder=self._on_folder, on_progress=self._on_progress)
-        except Cancelled:
+
+        app_config = self.app_config
+
+        def job(post, cancelled):
+            # выполняется в отдельном потоке: только чтение файлов, ни одного обращения к окну
+            cache = PhotoCache(app_config.cache_path(), app_config.cache_max_mb)
+
+            def folder_started(number, total, path):
+                post(("folder", number, total, path))
+                if cancelled():
+                    raise Cancelled()
+
+            def photo_read(done, total):
+                post(("progress", done, total))
+                if cancelled():
+                    raise Cancelled()
+
+            try:
+                return grouping.analyze_project(
+                    [root], app_config.extractor(), app_config.match.weights, app_config.group_threshold,
+                    feature_source=cache.extract_many, sort=app_config.sort, date_source=cache.shot_time,
+                    on_folder=folder_started, on_progress=photo_read)
+            finally:
+                cache.close()
+
+        self.worker.start(job, self._on_worker_message, self._on_analysis_done)
+
+    def _on_worker_message(self, message) -> None:
+        """Сообщения из фоновой задачи приходят сюда, в главный поток."""
+        kind = message[0]
+        if kind == "folder":
+            _, number, total, path = message
+            self.status_var.set("Папка %d из %d: %s" % (number, total, self._display_path(path)))
+            self.progress.configure(maximum=1, value=0)
+        elif kind == "progress":
+            _, done, total = message
+            self.progress.configure(maximum=max(total, 1), value=done)
+
+    def _on_analysis_done(self, result, error) -> None:
+        if isinstance(error, Cancelled):
             self.status_var.set("Анализ прерван.")
-        except Exception as exc:  # показать любую ошибку, а не закрыть программу
+        elif error is not None:
             self.status_var.set("Ошибка анализа.")
-            messagebox.showerror(TITLE, "Ошибка при анализе:\n%s" % exc, parent=self)
+            messagebox.showerror(TITLE, "Ошибка при анализе:\n%s" % error, parent=self)
         else:
+            self.analysis = result
             self.status_var.set(self._summary())
-        finally:
-            cache.close()
-            self._set_busy(False)
+        self._set_busy(False)
         self.render()
         if self._close_requested:
             self.destroy()
-
-    def _pump_safe(self) -> None:
-        try:
-            self._pump()
-        except Cancelled:
-            pass
 
     def _summary(self) -> str:
         a = self.analysis
@@ -397,11 +457,16 @@ class MainWindow(tk.Tk):
         BatchWindow(self, target, self.app_config, on_done=self.refresh)
 
     def on_close(self) -> None:
-        if self._busy:
+        if self._busy or self.worker.busy():
             self._close_requested = True
             self._cancel = True
+            self.worker.cancel()
             return
         self.destroy()
+
+    def wait_for_worker(self, timeout: float = 600.0) -> None:
+        """Дождаться окончания фоновой задачи (используется в тестах и при закрытии)."""
+        self.worker.wait(timeout)
 
 
 def main(argv=None) -> None:

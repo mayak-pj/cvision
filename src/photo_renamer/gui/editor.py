@@ -17,8 +17,22 @@ from ..reference import is_template_name, load_reference
 from ..scanner import list_photos
 from . import theme
 from .thumbgrid import MAX_SIZE, MIN_SIZE, ThumbnailGrid, to_photo
+from .worker import Worker
 
 TITLE = "Эталон"
+
+
+class _ThumbnailLoader:
+    """Источник миниатюр для фоновой задачи: вызывается как функция, умеет закрыть свой кэш."""
+
+    def __init__(self, cache: PhotoCache):
+        self.cache = cache
+
+    def __call__(self, path: str):
+        return self.cache.thumbnail(path)
+
+    def close(self) -> None:
+        self.cache.close()
 
 
 class ReferenceEditor(tk.Toplevel):
@@ -29,6 +43,7 @@ class ReferenceEditor(tk.Toplevel):
         self.names = names
         self.on_done = on_done
         self.cache = PhotoCache(app_config.cache_path(), app_config.cache_max_mb)
+        self.worker = Worker(self)
         self.log = oplog.RunLog(app_config.logs_path(), "эталон_" + oplog.folder_label(folder))
         self.photos: List[str] = []          # имена в порядке съёмки (порядок не меняется)
         self.history: List[List[renamer.RenameItem]] = []
@@ -66,7 +81,8 @@ class ReferenceEditor(tk.Toplevel):
         self.grid_widget = ThumbnailGrid(body, load_thumbnail=self.cache.thumbnail,
                                          on_selection_change=self._on_selection,
                                          on_activate=self._open_large,
-                                         on_load_progress=self._on_load_progress)
+                                         on_load_progress=self._on_load_progress,
+                                         worker=self.worker, make_loader=self._make_loader)
         self.grid_widget.pack(side="left", fill="both", expand=True)
 
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
@@ -118,6 +134,11 @@ class ReferenceEditor(tk.Toplevel):
         self.progress.pack(side="left")
 
     # --- данные --------------------------------------------------------------------------
+
+    def _make_loader(self):
+        """Вызывается внутри фонового потока: открывает свой кэш, потому что соединение SQLite
+        принадлежит создавшему его потоку."""
+        return _ThumbnailLoader(PhotoCache(self.app_config.cache_path(), self.app_config.cache_max_mb))
 
     def _load_folder(self) -> None:
         try:
@@ -283,6 +304,8 @@ class ReferenceEditor(tk.Toplevel):
         LargeView(self, self.folder, self.photos, index, self.cache)
 
     def close(self) -> None:
+        self.worker.cancel()
+        self.worker.wait(5)
         self.log.close()
         self.cache.close()
         if self.on_done:
