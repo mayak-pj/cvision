@@ -1,0 +1,71 @@
+name: Портативная сборка для Windows 7
+
+# Сборка ничего не компилирует: скачивает готовый embeddable Python 3.8.10, колёса cp38/win_amd64
+# и раскладывает их по папкам. Поэтому результат работает на Windows 7, хотя сам раннер — новее.
+# Раннеров с Windows 7 у GitHub нет, поэтому ЗАПУСК на рабочей машине проверяется вручную
+# (dist_offline/check_install.py).
+
+on:
+  workflow_dispatch:        # запуск кнопкой на вкладке Actions
+  push:
+    tags: ["v*"]            # и на каждый тег версии
+
+jobs:
+  tests:
+    name: Тесты
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8.10"
+          architecture: x64
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Запуск тестов
+        # тесты окна сами пропускаются, если графическая среда недоступна
+        run: python -m pytest -q
+
+  build:
+    name: Сборка дистрибутива
+    runs-on: windows-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python 3.8.10 (нужен ради файлов tkinter)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8.10"
+          architecture: x64
+
+      - name: Скачать embeddable Python 3.8.10
+        shell: pwsh
+        run: |
+          $url = "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile python-embed.zip
+          Get-FileHash python-embed.zip -Algorithm SHA256
+
+      - name: Скачать библиотеки (cp38, win_amd64)
+        run: python dist_offline/download_wheels.py --dest wheels
+
+      - name: Собрать дистрибутив
+        shell: pwsh
+        run: |
+          $tk = python -c "import sys; print(sys.prefix)"
+          python dist_offline/build_portable.py `
+            --embed python-embed.zip `
+            --wheels wheels `
+            --tk-from "$tk" `
+            --out "dist/Переименование фото"
+
+      - name: Проверить сборку (на Windows Server, не на Windows 7)
+        shell: pwsh
+        run: |
+          & "dist\Переименование фото\python\python.exe" "dist\Переименование фото\check_install.py"
+
+      - name: Выложить как артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: photo-renamer-windows7-portable
+          path: dist
+          retention-days: 30

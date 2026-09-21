@@ -161,6 +161,11 @@ python dist_offline\build_portable.py --embed python-3.8.10-embed-amd64.zip ^
 "D:\Переименование фото\python\python.exe" "D:\Переименование фото\check_install.py"
 ```
 
+Либо без единой команды: вкладка **Actions** → «Портативная сборка для Windows 7» → Run workflow.
+Раннер соберёт всё сам и выложит артефакт `photo-renamer-windows7-portable`
+(`.github/workflows/build-windows.yml`). Раннеров с Windows 7 у GitHub нет, поэтому
+запуск на рабочей машине всё равно проверяется через `check_install.py`.
+
 Подробно, с объяснением каждого шага и разбором частых ошибок: [dist_offline/README.md](dist_offline/README.md).
 Инструкция для конечного пользователя кладётся в дистрибутив: `dist_offline/Инструкция.txt`.
 
