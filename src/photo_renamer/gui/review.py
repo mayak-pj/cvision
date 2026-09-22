@@ -90,6 +90,22 @@ class BatchWindow(tk.Toplevel):
         ttk.Button(zoom, text="+", width=3,
                    command=lambda: self.set_thumb_size(self.thumb_size + THUMB_STEP)).pack(side="left", padx=(2, 0))
 
+        # Нижняя строка (состояние папки и кнопки) занимает место раньше остальных частей окна:
+        # pack раздаёт высоту в порядке упаковки, и на невысоком экране без этого исчезла бы именно она.
+        bottom = ttk.Frame(self, padding=(10, 6, 10, 10))
+        bottom.pack(side="bottom", fill="x")
+        self.status_var = tk.StringVar(value="")
+        ttk.Label(bottom, textvariable=self.status_var, wraplength=700, justify="left").pack(
+            side="left", fill="x", expand=True)
+        self.undo_btn = ttk.Button(bottom, text="Отменить эту папку", command=self.undo_folder, state="disabled")
+        self.undo_btn.pack(side="left", padx=4)
+        self.skip_btn = ttk.Button(bottom, text="Пропустить папку", command=self.skip_folder)
+        self.skip_btn.pack(side="left", padx=4)
+        self.apply_btn = ttk.Button(bottom, text="Переименовать папку", command=self.apply_folder)
+        self.apply_btn.pack(side="left")
+        self.close_btn = ttk.Button(bottom, text="Закрыть", command=self.close)
+        self.close_btn.pack(side="left", padx=(12, 0))
+
         body = ttk.Frame(self, padding=(10, 0, 10, 0))
         body.pack(fill="both", expand=True)
 
@@ -153,29 +169,19 @@ class BatchWindow(tk.Toplevel):
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self._refresh_categories())
         ttk.Entry(side, textvariable=self.search_var).pack(fill="x", pady=(2, 4))
+        buttons = ttk.Frame(side)
+        buttons.pack(side="bottom", fill="x")      # кнопки не должны уезжать за край на низком экране
+        ttk.Button(buttons, text="Применить к выбранным", command=self.apply_selected_category).pack(fill="x", pady=2)
+        ttk.Button(buttons, text="Не переименовывать", command=self.exclude_selected).pack(fill="x", pady=2)
         list_frame = ttk.Frame(side)
         list_frame.pack(fill="both", expand=True)
-        self.categories_list = tk.Listbox(list_frame, exportselection=False, activestyle="none", height=8, width=34)
+        self.categories_list = tk.Listbox(list_frame, exportselection=False, activestyle="none", height=6, width=34)
         cat_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.categories_list.yview)
         self.categories_list.configure(yscrollcommand=cat_scroll.set)
         self.categories_list.pack(side="left", fill="both", expand=True)
         cat_scroll.pack(side="left", fill="y")
         self.categories_list.bind("<Double-Button-1>", lambda e: self.apply_selected_category())
-        ttk.Button(side, text="Применить к выбранным", command=self.apply_selected_category).pack(fill="x", pady=2)
-        ttk.Button(side, text="Не переименовывать", command=self.exclude_selected).pack(fill="x", pady=2)
 
-        bottom = ttk.Frame(self, padding=(10, 6, 10, 10))
-        bottom.pack(fill="x")
-        self.status_var = tk.StringVar(value="")
-        ttk.Label(bottom, textvariable=self.status_var).pack(side="left", fill="x", expand=True)
-        self.undo_btn = ttk.Button(bottom, text="Отменить эту папку", command=self.undo_folder, state="disabled")
-        self.undo_btn.pack(side="left", padx=4)
-        self.skip_btn = ttk.Button(bottom, text="Пропустить папку", command=self.skip_folder)
-        self.skip_btn.pack(side="left", padx=4)
-        self.apply_btn = ttk.Button(bottom, text="Переименовать папку", command=self.apply_folder)
-        self.apply_btn.pack(side="left")
-        self.close_btn = ttk.Button(bottom, text="Закрыть", command=self.close)
-        self.close_btn.pack(side="left", padx=(12, 0))
         self._show_preview(None)
 
     # --- ход обработки ------------------------------------------------------------------

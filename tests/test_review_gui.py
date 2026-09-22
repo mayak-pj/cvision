@@ -22,6 +22,8 @@ def batch(tmp_path, monkeypatch):
         monkeypatch.setattr(review_mod.messagebox, name, lambda *a, **k: None)
     monkeypatch.setattr(review_mod.messagebox, "askyesno", lambda *a, **k: True)
     monkeypatch.setattr(review_mod, "ReportDialog", lambda *a, **k: None)
+    saved = []          # настройки пользователя тесты не трогают
+    monkeypatch.setattr(review_mod.cfg, "save_config", lambda cfg_, path=None: saved.append(cfg_.review_thumb))
 
     root_dir = tmp_path / "Проект"
     shoot(root_dir / "эталон", PARTS, names=REF_NAMES)
@@ -234,6 +236,23 @@ def test_photo_size_is_adjustable_and_remembered(batch):
     assert win.thumb_size == review_mod.MAX_THUMB
     win.set_thumb_size(1)
     assert win.thumb_size == review_mod.MIN_THUMB
+
+
+def test_bottom_row_stays_visible_on_small_screen(batch):
+    """Нижняя строка с состоянием и кнопками не должна вытесняться панелью справа."""
+    win, _ = batch
+    win.geometry("1024x700")
+    win.thumb_size = review_mod.MAX_THUMB
+    win._apply_thumb_size()
+    win.render_rows()
+    win.update()
+    height = win.winfo_height()
+    for button in (win.undo_btn, win.skip_btn, win.apply_btn, win.close_btn):
+        name = button.cget("text")
+        # вытесненная кнопка сжимается в полоску высотой в пиксель и уезжает наверх
+        assert button.winfo_height() > 10, "кнопка сжата: %s" % name
+        bottom = button.winfo_rooty() - win.winfo_rooty() + button.winfo_height()
+        assert height - 60 <= bottom <= height, "кнопка не внизу окна: %s" % name
 
 
 def test_preview_is_empty_without_single_selection(batch):
