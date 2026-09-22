@@ -109,10 +109,13 @@ def clip_model():
 
     from photo_renamer import clipfeat, config as cfg
 
-    if not clipfeat.runtime_available():
-        notes.append("нет onnxruntime — CLIP не используется, распознавание будет слабее. "
-                     "Соберите дистрибутив с onnxruntime (см. dist_offline/README.md).")
-        return "не установлен (программа работает без него)"
+    error = clipfeat.runtime_error()
+    if error:
+        notes.append("onnxruntime не загрузился — CLIP не используется, распознавание будет слабее.\n"
+                     "            %s\n"
+                     "            Если это «DLL load failed», рядом с python.exe не хватает библиотек "
+                     "Visual C++ (msvcp140.dll, vcruntime140_1.dll) — пересоберите дистрибутив." % error)
+        return "недоступен: %s" % error[:80]
     config, _ = cfg.load_config()
     path = config.clip_path()
     if not os.path.isfile(path):

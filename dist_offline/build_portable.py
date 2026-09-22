@@ -33,6 +33,11 @@ from pathlib import Path
 
 PROJECT_FILES = ["run.py", "config.example.json", "names.example.txt"]
 MODEL_FILE = "clip-vit-b32-vision.onnx"   # см. src/photo_renamer/clipfeat.py
+# Библиотеки Visual C++, без которых не загружается onnxruntime. Во встраиваемом Python есть
+# только vcruntime140.dll, а его native-модуль собран Visual Studio 2019 и требует ещё
+# vcruntime140_1.dll и msvcp140.dll. Это распространяемые библиотеки: их можно класть рядом
+# с программой, и тогда на рабочей машине не нужен ни установщик, ни права администратора.
+VCRUNTIME_FILES = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "concrt140.dll"]
 PROJECT_DIRS = ["src"]
 # Файлы tkinter, которых нет в embeddable-дистрибутиве.
 # zlib1.dll есть не во всех сборках Python: официальная с python.org его содержит,
@@ -182,6 +187,40 @@ def copy_model(model: Path, out: Path) -> str:
     return "%s (%.0f МБ)" % (MODEL_FILE, source.stat().st_size / 1e6)
 
 
+def install_vcruntime(python_dir: Path, site_packages: Path, fallback: Path = None):
+    """Кладёт библиотеки Visual C++ рядом с python.exe. Возвращает (скопировано, не найдено).
+
+    Сначала берутся файлы из колеса msvc-runtime (версия зафиксирована и подходит Windows 7),
+    и только если его нет — из системной папки машины сборки.
+    """
+    needed = {name.lower(): name for name in VCRUNTIME_FILES}
+    copied = {}
+    for key, name in needed.items():          # часть библиотек уже есть во встраиваемом Python
+        if (python_dir / name).is_file():
+            copied[key] = "уже в Python"
+    for pattern in ("*.data/data/*.dll", "*.data/data/Scripts/*.dll"):
+        for dll in sorted(site_packages.glob(pattern)):
+            key = dll.name.lower()
+            if key in needed and key not in copied:
+                shutil.copy2(dll, python_dir / needed[key])
+                copied[key] = "из колеса msvc-runtime"
+    for key, name in needed.items():
+        if key in copied or fallback is None:
+            continue
+        for candidate in (fallback / name, fallback / name.upper()):
+            if candidate.is_file():
+                shutil.copy2(candidate, python_dir / name)
+                copied[key] = "из системы"
+                break
+    missing = [name for key, name in needed.items() if key not in copied]
+    return copied, missing
+
+
+def system_dll_dir() -> Path:
+    """Папка системных библиотек Windows (запасной источник, если колеса msvc-runtime нет)."""
+    return Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+
+
 def copy_project(project: Path, out: Path) -> None:
     for name in PROJECT_DIRS:
         destination = out / name
@@ -201,7 +240,7 @@ def write_launchers(out: Path) -> None:
 
 
 def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path,
-          model: Path = None) -> None:
+          model: Path = None, vcruntime: Path = None) -> None:
     if out.exists():
         shutil.rmtree(out)
     python_dir = out / "python"
@@ -219,6 +258,12 @@ def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path,
         copy_tkinter(tk_from, python_dir)
     if tk_from is not None:
         verify_tkinter(python_dir)
+    copied, missing = install_vcruntime(python_dir, python_dir / "Lib" / "site-packages", vcruntime)
+    print("Библиотеки Visual C++: %s" % (", ".join("%s (%s)" % (n, how) for n, how in sorted(copied.items()))
+                                         or "не найдено ничего"))
+    if missing:
+        print("    ВНИМАНИЕ: не найдено %s — onnxruntime не загрузится, CLIP работать не будет"
+              % ", ".join(missing))
     copy_project(project, out)
     if model is not None:
         print("Модель CLIP: " + copy_model(model, out))
@@ -238,6 +283,8 @@ def main(argv=None) -> int:
     parser.add_argument("--tk-from", help=r'обычная установка Python 3.8.10, например C:\Program Files\Python38')
     parser.add_argument("--out", required=True, help="папка дистрибутива")
     parser.add_argument("--model", help="папка или файл модели CLIP (см. tools/get_clip_model.py)")
+    parser.add_argument("--vcruntime", help="откуда взять библиотеки Visual C++ "
+                                            "(по умолчанию на Windows — системная папка)")
     parser.add_argument("--project", default=str(Path(__file__).resolve().parent.parent),
                         help="папка проекта (по умолчанию — этот репозиторий)")
     parser.add_argument("--dry-run", action="store_true", help="только проверить и показать план")
@@ -247,6 +294,8 @@ def main(argv=None) -> int:
     tk_from = Path(args.tk_from) if args.tk_from else None
     out, project = Path(args.out), Path(args.project)
     model = Path(args.model) if args.model else None
+    # Без этих библиотек onnxruntime не загрузится, а значит не будет работать CLIP.
+    vcruntime = Path(args.vcruntime) if args.vcruntime else (system_dll_dir() if os.name == "nt" else None)
     try:
         check_inputs(embed, wheels, tk_from)
         print(plan(embed, wheels, tk_from, out, model))
@@ -256,7 +305,7 @@ def main(argv=None) -> int:
         if os.name != "nt":
             print("\nВНИМАНИЕ: сборка рассчитана на Windows. Здесь она соберётся, "
                   "но проверить запуск можно только на Windows.")
-        build(embed, wheels, tk_from, out, project, model)
+        build(embed, wheels, tk_from, out, project, model, vcruntime)
     except BuildError as exc:
         print("ОШИБКА: %s" % exc)
         return 1

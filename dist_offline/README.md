@@ -28,7 +28,8 @@ tkinter от 3.8.10). Совместимость с Windows 7 определяю
 |---|---|---|
 | `python-3.8.10-embed-amd64.zip` | python.org → Downloads → Windows → Python 3.8.10 → *Windows embeddable package (64-bit)* | сам Python, без установки |
 | `python-3.8.10-amd64.exe` | там же, *Windows installer (64-bit)* | только ради файлов tkinter: в embeddable-версии его нет |
-| библиотеки | командой ниже | numpy, scipy, Pillow |
+| библиотеки | командой ниже | numpy, scipy, Pillow, onnxruntime, библиотеки Visual C++ |
+| модель CLIP (~335 МБ) | `python tools/get_clip_model.py --dest model` | распознавание по смыслу; без неё программа работает слабее |
 
 Python 3.8.10 — последняя версия с поддержкой Windows 7.
 
@@ -40,6 +41,16 @@ python dist_offline\download_wheels.py --dest dist_offline\wheels
 
 Скачает колёса **именно для Python 3.8 и 64-битной Windows** (`cp38`, `win_amd64`),
 даже если сам скрипт запущен на другой версии Python. Проверьте список в конце вывода.
+
+Вместе с библиотеками скачиваются:
+
+- `onnxruntime` версии **1.11.1** — на ней работает модель CLIP. Более новые версии для
+  Windows 7 не годятся: в 1.12 сборки перестали работать на Windows 8.x, в 1.15 поддержку
+  убрали совсем;
+- `msvc-runtime` версии **14.29.30133** — библиотеки Visual C++ (`msvcp140.dll` и другие),
+  которых нет во встраиваемом Python, а без них `onnxruntime` не загружается. Версия 14.29 —
+  от Visual Studio 2019, она ещё поддерживает Windows 7 (14.40 и новее — уже нет).
+  Сборщик кладёт эти файлы рядом с `python.exe`.
 
 ## Шаг 2. Файлы tkinter
 
@@ -57,12 +68,16 @@ python dist_offline\download_wheels.py --dest dist_offline\wheels
 ## Шаг 3. Сборка
 
 ```bat
+python tools\get_clip_model.py --dest model
 python dist_offline\build_portable.py ^
     --embed python-3.8.10-embed-amd64.zip ^
     --wheels dist_offline\wheels ^
     --tk-from "C:\Users\Вы\AppData\Local\Programs\Python\Python38" ^
+    --model model ^
     --out "D:\Переименование фото"
 ```
+
+Без `--model` дистрибутив соберётся, но распознавание будет работать на обычных признаках.
 
 Сначала полезно посмотреть план без записи: добавьте `--dry-run`.
 

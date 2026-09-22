@@ -34,13 +34,23 @@ def default_path(base_dir: str) -> str:
     return os.path.join(base_dir, "model", MODEL_FILE)
 
 
-def runtime_available() -> bool:
-    """Установлен ли onnxruntime (на рабочей машине он распаковывается вместе с программой)."""
+def runtime_error() -> Optional[str]:
+    """Текст ошибки импорта onnxruntime или None, если всё хорошо.
+
+    Ошибку важно показывать целиком: на Windows она обычно означает не отсутствие пакета,
+    а нехватку библиотек Visual C++ рядом с python.exe (msvcp140.dll и vcruntime140_1.dll),
+    которых нет во встраиваемом Python.
+    """
     try:
         import onnxruntime  # noqa: F401
-    except Exception:
-        return False
-    return True
+    except Exception as exc:
+        return "%s: %s" % (type(exc).__name__, exc)
+    return None
+
+
+def runtime_available() -> bool:
+    """Установлен ли onnxruntime (на рабочей машине он распаковывается вместе с программой)."""
+    return runtime_error() is None
 
 
 def preprocess(img: Image.Image) -> np.ndarray:
@@ -102,8 +112,9 @@ def load(path: str, threads: Optional[int] = None) -> Optional[ClipEncoder]:
 
 def describe(path: str) -> str:
     """Человекочитаемое состояние: что программа будет использовать."""
-    if not runtime_available():
-        return "CLIP не используется: не установлен onnxruntime"
+    error = runtime_error()
+    if error:
+        return "CLIP не используется, onnxruntime не загрузился — %s" % error
     if not path or not os.path.isfile(path):
         return "CLIP не используется: нет файла модели (%s)" % (path or "путь не задан")
     return "CLIP используется: %s (%.0f МБ)" % (path, os.path.getsize(path) / 1e6)

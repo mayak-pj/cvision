@@ -23,6 +23,10 @@ PLATFORM = "win_amd64"
 # в 1.15 поддержку Windows 8.1 и ниже убрали совсем. Для разработки в requirements.txt
 # стоит диапазон, а сюда подставляется точная версия.
 ONNXRUNTIME = "1.11.1"
+# Библиотеки Visual C++, без которых onnxruntime не загружается: во встраиваемом Python есть
+# только vcruntime140.dll. Версия 14.29 — runtime от Visual Studio 2019: он ещё поддерживает
+# Windows 7, тогда как 14.40 и новее её уже не поддерживают.
+MSVC_RUNTIME = "14.29.30133"
 
 
 def _safe_console() -> None:
@@ -34,8 +38,10 @@ def _safe_console() -> None:
             pass
 
 
-def command(requirements: Path, dest: Path, onnxruntime: str = ONNXRUNTIME):
-    extra = ["onnxruntime==" + onnxruntime] if onnxruntime else []
+def command(requirements: Path, dest: Path, onnxruntime: str = ONNXRUNTIME,
+            msvc_runtime: str = MSVC_RUNTIME):
+    extra = (["onnxruntime==" + onnxruntime] if onnxruntime else []) + \
+            (["msvc-runtime==" + msvc_runtime] if msvc_runtime else [])
     return [sys.executable, "-m", "pip", "download",
             "-r", str(requirements)] + extra + [
             "--only-binary=:all:",          # исходники не годятся: на рабочей машине нечем собирать
@@ -51,6 +57,8 @@ def main(argv=None) -> int:
     parser.add_argument("--dest", default=str(here / "wheels"))
     parser.add_argument("--onnxruntime", default=ONNXRUNTIME,
                         help="версия onnxruntime для Windows 7 (пусто — как в requirements.txt)")
+    parser.add_argument("--msvc-runtime", default=MSVC_RUNTIME,
+                        help="версия библиотек Visual C++ (пусто — не скачивать)")
     parser.add_argument("--dry-run", action="store_true", help="показать команду и не скачивать")
     args = parser.parse_args(argv)
 
@@ -59,7 +67,7 @@ def main(argv=None) -> int:
         print("ОШИБКА: не найден файл %s" % requirements)
         return 1
     dest.mkdir(parents=True, exist_ok=True)
-    line = command(requirements, dest, args.onnxruntime)
+    line = command(requirements, dest, args.onnxruntime, args.msvc_runtime)
     print(" ".join(line))
     if args.dry_run:
         return 0

@@ -72,6 +72,12 @@ jobs:
             --tk-from "$tk" `
             --out "dist/Переименование фото" @model
 
+      - name: Проверить, что onnxruntime загружается в собранном Python
+        shell: pwsh
+        run: |
+          & "dist\Переименование фото\python\python.exe" -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
+          if ($LASTEXITCODE -ne 0) { throw "onnxruntime не загрузился: без него CLIP работать не будет" }
+
       - name: Проверить сборку (на Windows Server, не на Windows 7)
         shell: pwsh
         run: |
