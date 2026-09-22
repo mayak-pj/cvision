@@ -384,3 +384,37 @@ def test_renumbering_can_be_switched_off():
     result = run(rows, names=names, config=MatchConfig(strict_counts=False, renumber_existing=False))
     assert new_names(result)[:2] == ["Оперативная память 2 фото 1.JPG", "Оперативная память 2 фото 2.JPG"]
     assert new_names(result)[2:] == [None, None]
+
+
+def test_block_rule_fixes_pair_inside_another_series():
+    """Пара фото, ошибочно отнесённая к чужой категории внутри серии, исправляется правилом серий.
+
+    Так выглядит реальная ошибка на фотографиях: посреди серии «оперативная память» два кадра
+    оказались чуть ближе к процессору. Соседи голосуют за память, и пара возвращается в серию.
+    """
+    rows = [{"Оперативная память": 0.10}] * 3 \
+        + [{"Оперативная память": 0.125, "Процессор": 0.12}] * 2 \
+        + [{"Оперативная память": 0.10}] * 3
+    # лишние экземпляры и соседние расстояния здесь не при чём: проверяется только правило серий
+    base = dict(strict_counts=False, sequence_weight=0.0, extra_penalty=0.0)
+    without = run(rows, config=MatchConfig(block_weight=0.0, **base))
+    with_rule = run(rows, config=MatchConfig(**base))
+    assert [p.category.name for p in without.photos][3:5] == ["Процессор", "Процессор"]
+    assert [p.category.name for p in with_rule.photos] == ["Оперативная память"] * 8
+
+
+def test_block_rule_keeps_single_photo_categories():
+    """Деталь, которой в эталоне одно фото, серии иметь не может, и правило её не наказывает."""
+    rows = [{"Оперативная память": 0.10}] * 2 + [{"Кулер": 0.10}] + [{"Оперативная память": 0.10}] * 2
+    result = run(rows)
+    assert [p.category.name for p in result.photos] == [
+        "Оперативная память", "Оперативная память", "Кулер", "Оперативная память", "Оперативная память"]
+
+
+def test_block_penalty_without_neighbours_is_zero():
+    """Если рядом нет ни одного распознанного фото, подсказки нет и штрафа тоже нет."""
+    from photo_renamer.matcher import block_penalty
+
+    penalty = block_penalty([0, 1, 2], [-1, -1, -1], np.array([4, 4]), weight=0.1, span=3)
+    assert penalty.shape == (3, 2)
+    assert not penalty.any()

@@ -107,6 +107,8 @@ _MATCH_KEYS = {
     "renumber_existing": lambda v: None if isinstance(v, bool) else "ожидается true или false",
     "strict_counts": lambda v: None if isinstance(v, bool) or v == "auto" else "допустимо true, false или \"auto\"",
     "adapt_power": _number(0, 16),
+    "block_weight": _number(0, 1.0),
+    "block_span": _number(1, 100, integer=True),
 }
 _APP_KEYS = {
     "work_size": _number(32, 2048, integer=True),

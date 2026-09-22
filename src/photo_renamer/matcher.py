@@ -68,6 +68,11 @@ class MatchConfig:
     top_n: int = 3                      # сколько кандидатов показывать для неопознанных
     side_fill_max_distance: float = 0.50  # до какого расстояния соседнее фото достраивает сторону
     side_fill_top_k: int = 2            # ...и только если категория среди стольких первых кандидатов фото
+    # Правило серий: одну и ту же деталь снимают подряд, поэтому окрестность кадра подсказывает
+    # его категорию. Во втором проходе раскладки категория, за которую соседние кадры почти не
+    # голосуют, получает штраф к расстоянию. 0 — не учитывать.
+    block_weight: float = 0.02          # подобрано по ручной разметке (docs/decisions.md)
+    block_span: int = 8                 # сколько соседних кадров с каждой стороны подсказывают категорию
 
 
 @dataclass
@@ -362,6 +367,45 @@ def apply_sequence_prior(cat_dist: np.ndarray, weight: float) -> np.ndarray:
     return (cat_dist + weight * np.minimum(padded[:-2], padded[2:])) / (1.0 + weight)
 
 
+def block_penalty(positions: Sequence[int], anchors: Sequence[int], capacity: np.ndarray,
+                  weight: float, span: int) -> np.ndarray:
+    """Штраф за отрыв от серии: [фото][категория].
+
+    Одну деталь снимают подряд, поэтому категорию фото подсказывает окрестность. Соседние кадры
+    голосуют за свои категории с весом, убывающим с расстоянием, и штраф тем больше, чем меньшую
+    долю голосов набрала категория. Пара ошибочных фото внутри чужой серии не удерживает сама
+    себя: за неё два голоса против всей серии вокруг.
+
+    Штраф уменьшается для категорий, которых в эталоне мало (множитель 1 - 1/capacity): у детали
+    с единственным фото серии не бывает, и наказывать её не за что, а у пары сторон поддержка
+    всегда мала. capacity — сколько фото категории в эталоне.
+
+    positions — места фото в папке (порядок съёмки), anchors — категория каждого места по первому
+    проходу (-1, если её нет). Фото не голосует за себя. Если рядом нет ни одного распознанного
+    фото, подсказки нет и штрафа тоже нет.
+    """
+    n, n_cat = len(positions), len(capacity)
+    if weight <= 0 or span <= 0 or n == 0:
+        return np.zeros((n, n_cat))
+    anchors = np.asarray(anchors, dtype=int)
+    pos = np.asarray(positions, dtype=int)
+
+    votes = np.zeros((n, n_cat))
+    anchored = np.zeros(n)
+    for shift in range(1, span + 1):
+        k = 1.0 - shift / float(span + 1)          # чем дальше кадр, тем слабее голос
+        for neighbour in (pos - shift, pos + shift):
+            inside = (neighbour >= 0) & (neighbour < len(anchors))
+            cats = np.where(inside, anchors[np.clip(neighbour, 0, len(anchors) - 1)], -1)
+            known = cats >= 0
+            votes[known, cats[known]] += k
+            anchored[known] += k
+
+    share = np.divide(votes, anchored[:, None], out=np.zeros_like(votes), where=anchored[:, None] > 0)
+    scale = 1.0 - 1.0 / np.maximum(np.asarray(capacity, dtype=float), 1.0)
+    return weight * scale[None, :] * (1.0 - share) * (anchored[:, None] > 0)
+
+
 def _confidences(cat_dist_row: np.ndarray, config: MatchConfig) -> np.ndarray:
     """% уверенности по категориям: softmax(-d/T) с псевдокатегорией «неопознано» на расстоянии max_distance."""
     logits = -np.append(cat_dist_row, config.max_distance) / config.temperature
@@ -400,22 +444,44 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
     # max_distance + штраф, поэтому фото в пределах границы всегда получает категорию,
     # хотя бы как лишний экземпляр. Штраф влияет только на выбор между категориями.
     limit = np.inf if strict else config.max_distance
-    dist = np.where(cat_dist <= limit, cat_dist, np.inf)
-    cost = dist[:, col_cat] + col_cost[None, :]
     unmatched = 1e5 if strict else (config.max_distance + config.extra_penalty)
-    cost = np.hstack([cost, np.full((n, n), unmatched)])
-    cost = np.where(np.isfinite(cost), cost, 1e6)
 
-    row_ind, col_ind = linear_sum_assignment(cost)
-    assigned = np.full(n, -1)
-    for r, col in zip(row_ind, col_ind):
-        if col < len(col_cat):
-            assigned[r] = col_cat[col]
+    base_slots = int(base_cap.sum())
+
+    def assign(distances: np.ndarray):
+        """Возвращает (категория для каждого фото, занято ли «лишнее» место сверх состава эталона)."""
+        dist = np.where(distances <= limit, distances, np.inf)
+        cost = dist[:, col_cat] + col_cost[None, :]
+        cost = np.hstack([cost, np.full((n, n), unmatched)])
+        cost = np.where(np.isfinite(cost), cost, 1e6)
+        row_ind, col_ind = linear_sum_assignment(cost)
+        out = np.full(n, -1)
+        spare = np.zeros(n, dtype=bool)
+        for r, col in zip(row_ind, col_ind):
+            if col < len(col_cat):
+                out[r] = col_cat[col]
+                spare[r] = col >= base_slots
+        return out, spare
+
+    assigned, spare = assign(cat_dist)
+    # второй проход: теперь известно, где какая категория встречается в папке, и фото,
+    # оторвавшееся от своей серии, получает штраф (правило серий)
+    penalty = block_penalty(rows, _anchor_categories(result, rows, assigned), model.capacity,
+                            config.block_weight, config.block_span)
+    if penalty.any():
+        cat_dist = cat_dist + penalty
+        assigned, spare = assign(cat_dist)
     occupied = used + np.bincount(assigned[assigned >= 0], minlength=n_cat)
 
     for r, i in enumerate(rows):
+        # категория, у которой все места эталона заняты другими фото, доступна этому фото
+        # только как лишний экземпляр — на столько же она и менее правдоподобна.
+        # Но своё место, доставшееся фото в раскладке, штрафом не облагается: иначе несколько
+        # лишних фото обрушивали бы уверенность у всей категории, включая верно опознанные.
         others = occupied - (np.arange(n_cat) == assigned[r])
         full = others >= model.capacity
+        if assigned[r] >= 0 and not spare[r]:
+            full[assigned[r]] = False
         conf = _confidences(cat_dist[r] + config.extra_penalty * full, config)
         order = np.argsort(-conf, kind="stable")[: config.top_n]
         photo = result.photos[i]
@@ -442,6 +508,24 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
         else:
             photo.status = STATUS_OK
             photo.category = model.categories[c]
+
+
+def _anchor_categories(result: FolderMatch, rows: List[int], assigned: np.ndarray) -> np.ndarray:
+    """Категория каждого места папки (-1, если её нет): первый проход, уже названные фото и ручные правки."""
+    model = result.model
+    anchors = np.full(len(result.photos), -1, dtype=int)
+    for r, i in enumerate(rows):
+        if assigned[r] >= 0:
+            anchors[i] = assigned[r]
+    for i, (cat, _, _) in result.fixed.items():
+        c = model.cat_index.get(cat.key)
+        if c is not None:
+            anchors[i] = c
+    for i, key in result.manual.items():
+        c = model.cat_index.get(key) if key else None
+        if c is not None:
+            anchors[i] = c
+    return anchors
 
 
 def _runs(photos: List[PhotoMatch], include_named: Optional[Set[str]] = None) -> List[Tuple[Category, List[int]]]:
