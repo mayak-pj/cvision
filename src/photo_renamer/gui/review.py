@@ -329,6 +329,29 @@ class BatchWindow(tk.Toplevel):
             self.render_rows()
             self._select_photo(following)
 
+    def _describe(self, index: int) -> str:
+        """Как подписано фото: новое имя, если есть, иначе состояние."""
+        if not 0 <= index < len(self.match.photos):
+            return "—"
+        photo = self.match.photos[index]
+        if photo.new_name:
+            return photo.new_name
+        if photo.identified:
+            return photo.filename + " (имя не меняется)"
+        return photo.filename + " — " + STATUS_TEXT.get(photo.status, "")
+
+    def _show_neighbours(self, index: int) -> None:
+        """Соседи по порядку съёмки: по ним видно, к какой серии относится снимок.
+        Это важно, когда сомнительные строки подняты наверх и соседи не видны рядом."""
+        frame = ttk.LabelFrame(self.candidates_frame, text="Соседи по съёмке", padding=4)
+        frame.pack(fill="x", pady=(6, 0))
+        for shift, title in ((-1, "до"), (0, "это фото"), (1, "после")):
+            text = "%s: %s" % (title, self._describe(index + shift))
+            label = ttk.Label(frame, text=text, wraplength=290, justify="left")
+            if shift == 0:
+                label.configure(font="TkHeadingFont")
+            label.pack(anchor="w")
+
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
             widget.destroy()
@@ -339,12 +362,13 @@ class BatchWindow(tk.Toplevel):
         photo = self.match.photos[indexes[0]]
         if not photo.candidates:
             ttk.Label(self.candidates_frame, text="Кандидатов нет").pack(anchor="w")
-            return
-        ttk.Label(self.candidates_frame, text="Похоже на:").pack(anchor="w")
-        for number, candidate in enumerate(photo.candidates, start=1):
-            text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
-            ttk.Button(self.candidates_frame, text=text,
-                       command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
+        else:
+            ttk.Label(self.candidates_frame, text="Похоже на:").pack(anchor="w")
+            for number, candidate in enumerate(photo.candidates, start=1):
+                text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
+                ttk.Button(self.candidates_frame, text=text,
+                           command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
+        self._show_neighbours(photo.index)
 
     def _refresh_categories(self) -> None:
         self.categories_list.delete(0, "end")
@@ -387,8 +411,18 @@ class BatchWindow(tk.Toplevel):
             messagebox.showinfo(TITLE, "Переименовывать нечего.", parent=self)
             self.next_folder()
             return
-        if not messagebox.askyesno(TITLE, "Переименовать %d файл(ов) в папке\n%s?"
-                                   % (len(plan.pending), self.folder.path), parent=self):
+        unresolved = len(self.match.unidentified())
+        if unresolved:
+            question = ("Не опознано фото: %d. Их имена останутся прежними, а у остальных номера\n"
+                        "будут идти по порядку съёмки без учёта пропущенных — потом будет сложно\n"
+                        "понять, какой ракурс к какой детали.\n\n"
+                        "Лучше разобрать их сейчас: включите «Показать только требующие проверки»\n"
+                        "и назначьте категории клавишами 1, 2, 3 или 0.\n\n"
+                        "Всё равно переименовать %d файл(ов)?") % (unresolved, len(plan.pending))
+            if not messagebox.askyesno(TITLE, question, parent=self):
+                return
+        elif not messagebox.askyesno(TITLE, "Переименовать %d файл(ов) в папке\n%s?"
+                                     % (len(plan.pending), self.folder.path), parent=self):
             return
         renamer.apply_plan(plan, self.log)
         self._last_plan = plan

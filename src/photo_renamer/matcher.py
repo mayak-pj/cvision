@@ -54,6 +54,10 @@ class MatchConfig:
     # Учёт порядка съёмки: к расстоянию фото добавляется доля расстояния лучшего из соседей.
     # Одинаковые детали снимают подряд, поэтому соседи подсказывают категорию. 0 — не учитывать.
     sequence_weight: float = 0.5
+    # Перенумеровывать ли уже названные фото, когда в их категории появились новые.
+    # Иначе номера перестают соответствовать порядку съёмки: новые фото получают свободные
+    # номера, и понять, какой ракурс к какой детали, становится невозможно.
+    renumber_existing: bool = True
     # Строгий режим: у категорий ровно столько мест, сколько фото в эталоне, лишних мест нет.
     # "auto" — включается, когда число фото в папке совпадает с эталоном; True/False — принудительно.
     strict_counts: object = "auto"
@@ -440,12 +444,23 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
             photo.category = model.categories[c]
 
 
-def _runs(photos: List[PhotoMatch]) -> List[Tuple[Category, List[int]]]:
-    """Серии подряд идущих фото одной категории (уже переименованные фото серии разрывают)."""
+def _runs(photos: List[PhotoMatch], include_named: Optional[Set[str]] = None) -> List[Tuple[Category, List[int]]]:
+    """Серии подряд идущих фото одной категории.
+
+    Уже названные фото обычно серии разрывают (их не трогаем). Но если в их категории появились
+    новые фото (include_named), они входят в серию наравне с остальными: только так номера
+    экземпляров соответствуют порядку съёмки.
+    """
+    include_named = include_named or set()
     runs: List[Tuple[Category, List[int]]] = []
     current_key = None
     for p in photos:
-        key = p.category.key if p.identified and p.status != STATUS_ALREADY_NAMED else None
+        if not p.identified:
+            key = None
+        elif p.status != STATUS_ALREADY_NAMED or p.category.key in include_named:
+            key = p.category.key
+        else:
+            key = None
         if key is not None and key == current_key:
             runs[-1][1].append(p.index)
         elif key is not None:
@@ -532,17 +547,23 @@ def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[
 def renumber(result: FolderMatch) -> None:
     """Пересчитывает экземпляры, стороны и новые имена. Вызывается и после ручной правки категорий."""
     photos = result.photos
+    # категории, в которых появились новые фото: их нумерацию считаем заново по порядку съёмки,
+    # включая уже названные фото (иначе номера не будут соответствовать порядку)
+    fresh = {p.category.key for p in photos if p.identified and p.status != STATUS_ALREADY_NAMED}
+    include_named = fresh if result.config.renumber_existing else set()
+
     used: Dict[str, Set[int]] = {}
     for p in photos:
         if p.status == STATUS_ALREADY_NAMED:
-            used.setdefault(p.category.key, set()).add(p.instance)
             p.new_name = None
+            if p.category.key not in include_named:
+                used.setdefault(p.category.key, set()).add(p.instance)
         elif not p.identified:
             p.instance = p.side = p.new_name = None
 
     result.warnings = [w for w in result.warnings if not w.startswith("Неполный комплект")]
     next_free: Dict[str, int] = {}
-    for cat, idx in _runs(photos):
+    for cat, idx in _runs(photos, include_named):
         for group in _split_run(result, cat, idx):
             instance = next_free.get(cat.key, 1)
             while instance in used.get(cat.key, set()):
@@ -553,6 +574,8 @@ def renumber(result: FolderMatch) -> None:
                 p.instance, p.side = instance, side
                 new_name = cat.format_name(instance, side, os.path.splitext(p.filename)[1])
                 p.new_name = None if new_name == _nfc(p.filename) else new_name
+                if p.new_name and p.status == STATUS_ALREADY_NAMED:
+                    p.note = "перенумерация по порядку съёмки"
             if len(group) != cat.sides:
                 result.warnings.append(
                     "Неполный комплект сторон: %s %d — %d фото из %d (%s)"

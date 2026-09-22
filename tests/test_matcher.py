@@ -353,3 +353,34 @@ def test_runs_split_by_sides_only():
     """Деление серии на экземпляры идёт только по числу сторон: паузы между кадрами не используются."""
     rows = [{"Оперативная память": 0.10}] * 4
     assert [(p.instance, p.side) for p in run(rows).photos] == [(1, 1), (1, 2), (2, 1), (2, 2)]
+
+
+def test_new_photos_renumber_existing_by_shooting_order():
+    """Часть трансиверов уже названа, часть опознана сейчас: номера должны идти по порядку съёмки,
+    иначе нельзя понять, какой ракурс к какой детали."""
+    names = ["DSC_0001.JPG", "DSC_0002.JPG", "Оперативная память 1 фото 1.JPG", "Оперативная память 1 фото 2.JPG"]
+    rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.11}, {}, {}]
+    result = run(rows, names=names)
+    # новые фото сняты раньше, поэтому они — экземпляр 1, а уже названные становятся вторым
+    assert new_names(result) == [
+        "Оперативная память 1 фото 1.JPG",
+        "Оперативная память 1 фото 2.JPG",
+        "Оперативная память 2 фото 1.JPG",
+        "Оперативная память 2 фото 2.JPG",
+    ]
+    assert "перенумерация" in result.photos[2].note
+
+
+def test_existing_names_untouched_without_new_photos_of_that_category():
+    names = ["Оперативная память 1 фото 1.JPG", "Оперативная память 1 фото 2.JPG", "DSC_0003.JPG"]
+    rows = [{}, {}, {"Кулер": 0.10}]
+    result = run(rows, names=names)
+    assert new_names(result) == [None, None, "Кулер.JPG"]   # чужую категорию не трогаем
+
+
+def test_renumbering_can_be_switched_off():
+    names = ["DSC_0001.JPG", "DSC_0002.JPG", "Оперативная память 1 фото 1.JPG", "Оперативная память 1 фото 2.JPG"]
+    rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.11}, {}, {}]
+    result = run(rows, names=names, config=MatchConfig(strict_counts=False, renumber_existing=False))
+    assert new_names(result)[:2] == ["Оперативная память 2 фото 1.JPG", "Оперативная память 2 фото 2.JPG"]
+    assert new_names(result)[2:] == [None, None]

@@ -104,6 +104,7 @@ _MATCH_KEYS = {
     "side_fill_top_k": _number(1, 10, integer=True),
     "weights": _check_weights,
     "sequence_weight": _number(0, 3),
+    "renumber_existing": lambda v: None if isinstance(v, bool) else "ожидается true или false",
     "strict_counts": lambda v: None if isinstance(v, bool) or v == "auto" else "допустимо true, false или \"auto\"",
     "adapt_power": _number(0, 16),
 }

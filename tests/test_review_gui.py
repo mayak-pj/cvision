@@ -193,3 +193,45 @@ def test_hotkey_without_such_candidate_does_nothing(batch):
     photo = win.match.photos[0]
     if len(photo.candidates) < 3:
         assert rows(win) == before
+
+
+def all_labels(widget):
+    """Тексты всех подписей внутри виджета, на любой глубине."""
+    texts = []
+    for child in widget.winfo_children():
+        try:
+            texts.append(child.cget("text"))
+        except Exception:
+            pass
+        texts.extend(all_labels(child))
+    return texts
+
+
+def test_neighbours_are_shown_for_selected_photo(batch):
+    win, _ = batch
+    win.sort_doubtful.set(False)          # порядок съёмки
+    win.render_rows()
+    select_row(win, 2)
+    texts = all_labels(win.candidates_frame)
+    assert any(t.startswith("до: ") for t in texts)
+    assert any(t.startswith("это фото: ") for t in texts)
+    assert any(t.startswith("после: ") for t in texts)
+    previous = win.match.photos[1]
+    assert any((previous.new_name or previous.filename) in t for t in texts)
+
+
+def test_warning_before_renaming_with_unresolved_photos(batch, monkeypatch):
+    win, root_dir = batch
+    from photo_renamer import matcher
+
+    matcher.set_category(win.match, 0, None)      # два фото оставлены без имени
+    matcher.set_category(win.match, 1, None)
+    win.render_rows()
+    assert len(win.match.unidentified()) >= 2
+
+    questions = []
+    monkeypatch.setattr(review_mod.messagebox, "askyesno",
+                        lambda title, text, **k: questions.append(text) or False)
+    win.apply_folder()
+    assert questions and "Не опознано фото" in questions[0]
+    assert sorted(os.listdir(str(root_dir / "SN2")))[0].startswith("IMG_")   # отменили — ничего не менялось
