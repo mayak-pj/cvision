@@ -94,6 +94,24 @@ def test_folder_with_duplicate_missing_and_foreign(model, tmp_path):
     assert "Кабель HDMI" not in result.category_counts()
 
 
+def test_warns_when_folder_is_far_from_reference(model, tmp_path):
+    """Папка из другой съёмки: фото дальше от категорий, чем категории эталона друг от друга.
+
+    Порог (reference_gap_warning) подобран на реальных проектах, поэтому здесь он задаётся явно:
+    у нарисованных картинок категории расходятся гораздо сильнее, чем у фотографий.
+    """
+    names = make_target(tmp_path / "SN004", [(None, 0)] * 10)    # ни одна деталь не из эталона
+    def run(threshold):
+        return match_folder(model, str(tmp_path / "SN004"), names,
+                            MatchConfig(strict_counts=False, reference_gap_warning=threshold))
+
+    result = run(1.0)
+    assert result.reference_separation > 0
+    assert result.reference_gap > result.reference_separation
+    assert any(w.startswith("Папка мало похожа на эталон") for w in result.warnings)
+    assert not any(w.startswith("Папка мало похожа") for w in run(2.0).warnings)
+
+
 def test_never_wrong_name_under_heavy_duplication(model, tmp_path):
     """Состав сильно отличается от эталона (по 25 одинаковых деталей). Неопознанные допустимы,
     неверная категория — нет."""
