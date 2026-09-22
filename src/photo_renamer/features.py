@@ -7,7 +7,10 @@
 - phash   — perceptual hash (алгоритм imagehash.phash), форма и контуры;
 - hist    — гистограмма HSV всего кадра (вместе с фоном);
 - lbp     — гистограмма локальных бинарных шаблонов (текстура) по сетке 2×2. Устойчива к освещению;
-- hog     — гистограмма направлений контуров по сетке 4×4. Устойчива к освещению.
+- hog     — гистограмма направлений контуров по сетке 4×4. Устойчива к освещению;
+- clip    — эмбеддинг CLIP (смысловое сходство), если подключена модель: см. clipfeat.py.
+            Он устойчив к смене освещения и камеры и на реальных проектах различает детали
+            заметно лучше остальных признаков.
 Веса признаков задаются в настройках. По умолчанию: fg_hist ×2 + lbp ×1 + hog ×1,
 а матчер дополнительно подстраивает веса под освещение каждой папки (см. matcher).
 
@@ -20,7 +23,7 @@
 
 import io
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -34,7 +37,8 @@ FG_HIST = "fg_hist"
 TINY = "tiny"
 LBP = "lbp"
 HOG = "hog"
-ALL_FEATURES = (FG_HIST, TINY, PHASH, HIST, LBP, HOG)
+CLIP = "clip"
+ALL_FEATURES = (FG_HIST, TINY, PHASH, HIST, LBP, HOG, CLIP)
 
 
 class FeatureError(Exception):
@@ -61,6 +65,8 @@ class Features:
     lbp: np.ndarray
     # Гистограммы направлений градиента по ячейкам сетки, единичной длины.
     hog: np.ndarray
+    # Эмбеддинг CLIP (512, единичной длины) или None, если модель не подключена.
+    clip: Optional[np.ndarray] = None
 
 
 # Размер, до которого фото декодируется при чтении: хватает и для признаков (256 px),
@@ -68,7 +74,7 @@ class Features:
 DECODE_SIZE = 400
 THUMB_SIZE = 400      # размер миниатюры, она же — единственный источник признаков
 THUMB_QUALITY = 85
-FEATURE_VERSION = "3"  # увеличить при изменении способа расчёта признаков (сбрасывает кэш признаков)
+FEATURE_VERSION = "4"  # увеличить при изменении способа расчёта признаков (сбрасывает кэш признаков)
 
 
 def thumbnail_jpeg(img: Image.Image) -> bytes:
@@ -242,6 +248,7 @@ class FeatureExtractor:
         tiny_size: int = 16,
         background_threshold: float = 40.0,
         white_balance: bool = False,
+        encoder=None,
     ):
         if rotations not in (1, 2, 4):
             raise ValueError("rotations должно быть 1, 2 или 4")
@@ -255,8 +262,12 @@ class FeatureExtractor:
         self.tiny_size = tiny_size
         self.background_threshold = background_threshold
         self.white_balance = white_balance
+        # clipfeat.ClipEncoder или None. Если модель не подключена, признак clip не считается,
+        # и программа работает на остальных признаках.
+        self.encoder = encoder
 
-    def from_image(self, img: Image.Image) -> Features:
+    def from_image(self, img: Image.Image, clip: Optional[np.ndarray] = None) -> Features:
+        """clip — готовый эмбеддинг (его считают из миниатюры целиком, см. from_thumbnail)."""
         if self.white_balance:
             img = balance_by_background(img)
         step = 4 // self.rotations
@@ -269,21 +280,30 @@ class FeatureExtractor:
             tiny=tiny_vector(img, self.tiny_size),
             lbp=lbp_histogram(img),
             hog=hog_vector(img),
+            clip=clip if clip is not None else (
+                self.encoder.encode_one(img) if self.encoder is not None else None),
         )
 
     def from_file(self, path: str) -> Features:
         return self.from_thumbnail(thumbnail_jpeg(load_image(path, max(self.work_size, DECODE_SIZE))))
 
     def from_thumbnail(self, data: bytes) -> Features:
-        """Признаки из миниатюры (JPEG). Единая точка для чтения с диска и для кэша."""
+        """Признаки из миниатюры (JPEG). Единая точка для чтения с диска и для кэша.
+
+        CLIP считается по миниатюре целиком (400 px): его вход — 224 px, и лишнее уменьшение
+        до work_size съедало бы детали. Остальные признаки, как и раньше, считаются с work_size.
+        """
         with Image.open(io.BytesIO(data)) as thumb:
-            return self.from_image(fit(thumb.convert("RGB"), self.work_size))
+            full = thumb.convert("RGB")
+            clip = self.encoder.encode_one(full) if self.encoder is not None else None
+            return self.from_image(fit(full, self.work_size), clip=clip)
 
     def version(self) -> str:
         """Строка, однозначно описывающая способ расчёта признаков (ключ кэша признаков)."""
-        return "v%s|%d|%d|%s|%d|%d|%d|%g|%d" % (
+        return "v%s|%d|%d|%s|%d|%d|%d|%g|%d|%s" % (
             FEATURE_VERSION, self.work_size, self.hash_size, ",".join(map(str, self.hist_bins)), self.rotations,
-            self.grid, self.tiny_size, self.background_threshold, int(self.white_balance))
+            self.grid, self.tiny_size, self.background_threshold, int(self.white_balance),
+            getattr(self.encoder, "version", "-"))
 
     def distance_components(self, a: Sequence[Features], b: Sequence[Features]) -> Dict[str, np.ndarray]:
         """Матрицы расстояний формы (len(a), len(b)) по каждому признаку.
@@ -312,7 +332,7 @@ class FeatureExtractor:
         b_lbp = np.stack([f.lbp for f in b])
         lbp = 1.0 - np.minimum(a_lbp[:, None, :], b_lbp[None, :, :]).sum(axis=-1)
 
-        return {
+        out = {
             PHASH: phash,
             HIST: np.clip(hist, 0.0, 1.0),
             FG_HIST: np.clip(fg_hist, 0.0, 1.0),
@@ -320,6 +340,12 @@ class FeatureExtractor:
             LBP: np.clip(lbp, 0.0, 1.0),
             HOG: np.clip(hog, 0.0, 1.0),
         }
+        # CLIP считается только если эмбеддинги есть у всех фото с обеих сторон: иначе
+        # часть расстояний была бы посчитана по другому набору признаков, чем остальные.
+        if all(f.clip is not None for f in a) and all(f.clip is not None for f in b):
+            clip = 1.0 - np.stack([f.clip for f in a]) @ np.stack([f.clip for f in b]).T
+            out[CLIP] = np.clip(clip, 0.0, 2.0)
+        return out
 
 
 def component_scales(components: Dict[str, np.ndarray], different: np.ndarray, target: float = 0.5) -> Dict[str, float]:

@@ -6,6 +6,10 @@
 
     python download_wheels.py                 # в папку wheels рядом со скриптом
     python download_wheels.py --dest D:\\wheels
+
+Кроме библиотек нужна ещё модель CLIP (около 335 МБ) — она качается отдельно:
+
+    python tools/get_clip_model.py --dest model
 """
 
 import argparse
@@ -15,6 +19,10 @@ from pathlib import Path
 
 PYTHON_VERSION = "38"
 PLATFORM = "win_amd64"
+# Версия onnxruntime для Windows 7: в 1.12 сборки перестали работать на Windows 8.x,
+# в 1.15 поддержку Windows 8.1 и ниже убрали совсем. Для разработки в requirements.txt
+# стоит диапазон, а сюда подставляется точная версия.
+ONNXRUNTIME = "1.11.1"
 
 
 def _safe_console() -> None:
@@ -26,9 +34,10 @@ def _safe_console() -> None:
             pass
 
 
-def command(requirements: Path, dest: Path):
+def command(requirements: Path, dest: Path, onnxruntime: str = ONNXRUNTIME):
+    extra = ["onnxruntime==" + onnxruntime] if onnxruntime else []
     return [sys.executable, "-m", "pip", "download",
-            "-r", str(requirements),
+            "-r", str(requirements)] + extra + [
             "--only-binary=:all:",          # исходники не годятся: на рабочей машине нечем собирать
             "--python-version", PYTHON_VERSION,
             "--platform", PLATFORM,
@@ -40,6 +49,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--requirements", default=str(here.parent / "requirements.txt"))
     parser.add_argument("--dest", default=str(here / "wheels"))
+    parser.add_argument("--onnxruntime", default=ONNXRUNTIME,
+                        help="версия onnxruntime для Windows 7 (пусто — как в requirements.txt)")
     parser.add_argument("--dry-run", action="store_true", help="показать команду и не скачивать")
     args = parser.parse_args(argv)
 
@@ -48,7 +59,7 @@ def main(argv=None) -> int:
         print("ОШИБКА: не найден файл %s" % requirements)
         return 1
     dest.mkdir(parents=True, exist_ok=True)
-    line = command(requirements, dest)
+    line = command(requirements, dest, args.onnxruntime)
     print(" ".join(line))
     if args.dry_run:
         return 0

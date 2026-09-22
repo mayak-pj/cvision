@@ -125,10 +125,11 @@ def run_batch(reference_dir: str, targets: List[str], config: cfg.AppConfig, app
 
 def run_groups(roots: List[str], config: cfg.AppConfig, out=print) -> grouping.ProjectAnalysis:
     started = time.time()
+    extractor = config.extractor()
     cache = PhotoCache(config.cache_path(), config.cache_max_mb)
     try:
         analysis = grouping.analyze_project(
-            roots, config.extractor(), config.match.weights, config.group_threshold,
+            roots, extractor, config.match.for_features(extractor.encoder is not None), config.group_threshold,
             feature_source=cache.extract_many, sort=config.sort, date_source=cache.shot_time,
             on_folder=lambda n, total, path: out("Папка %d из %d: %s" % (n, total, path)),
             on_progress=_progress("  чтение фото"))

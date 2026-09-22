@@ -48,6 +48,11 @@ IDENTIFIED = (STATUS_OK, STATUS_SIDE_RULE, STATUS_CHECK, STATUS_MANUAL, STATUS_A
 class MatchConfig:
     # Подобрано по ручной разметке реальных папок (docs/decisions.md): цвет без фона + текстура + контуры.
     weights: Dict[str, float] = field(default_factory=lambda: {feat.FG_HIST: 2.0, feat.LBP: 1.0, feat.HOG: 1.0})
+    # Веса, когда подключена модель CLIP: он несёт основной сигнал, цвет и текстура его удерживают.
+    # Подобрано по ручной разметке (docs/decisions.md): на папке другой машины это дало 117 верных
+    # имён против 20 и ни одной ошибки категории.
+    weights_with_clip: Dict[str, float] = field(
+        default_factory=lambda: {feat.CLIP: 4.0, feat.FG_HIST: 1.0, feat.LBP: 1.0})
     # Подстройка весов под освещение папки: вес признака делится на (рост расстояний)^adapt_power.
     # 0 — не подстраивать.
     adapt_power: float = 4.0
@@ -68,6 +73,10 @@ class MatchConfig:
     top_n: int = 3                      # сколько кандидатов показывать для неопознанных
     side_fill_max_distance: float = 0.50  # до какого расстояния соседнее фото достраивает сторону
     side_fill_top_k: int = 2            # ...и только если категория среди стольких первых кандидатов фото
+
+    def for_features(self, has_clip: bool) -> Dict[str, float]:
+        """Веса под то, что реально посчитано: с моделью CLIP — свой набор, без неё — обычный."""
+        return dict(self.weights_with_clip if has_clip else self.weights)
     # Правило серий: одну и ту же деталь снимают подряд, поэтому окрестность кадра подсказывает
     # его категорию. Во втором проходе раскладки категория, за которую соседние кадры почти не
     # голосуют, получает штраф к расстоянию. 0 — не учитывать.
@@ -126,6 +135,9 @@ class ReferenceModel:
                 self.warnings.append("Категория «%s»: ни одно эталонное фото не прочитано, она не будет распознаваться"
                                      % cat.name)
         self.cat_index = {c.key: i for i, c in enumerate(self.categories)}
+        # getattr: в тестах признаки бывают подставными объектами без поля clip
+        self.has_clip = bool(readable) and all(getattr(f, "clip", None) is not None
+                                               for pairs in readable.values() for _, f in pairs)
         self.capacity = np.array([len(c.photos) for c in self.categories], dtype=int)
         self.max_sides = max([c.sides for c in self.categories] or [1])
 
@@ -326,7 +338,8 @@ def match_features(
 
     rows = [i for i, f in enumerate(feature_list) if f is not None and i not in fixed]
     feature_row = {i: r for r, i in enumerate(rows)}
-    cat_dist, side_dist, weights_used = model.distances([feature_list[i] for i in rows], config.weights,
+    cat_dist, side_dist, weights_used = model.distances([feature_list[i] for i in rows],
+                                                        config.for_features(model.has_clip),
                                                         config.adapt_power)
 
     photos = [PhotoMatch(i, name, STATUS_UNREADABLE) for i, name in enumerate(filenames)]

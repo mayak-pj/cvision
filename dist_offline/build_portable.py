@@ -4,6 +4,7 @@
 
     Переименование фото\\
         python\\                 embeddable Python 3.8.10 + библиотеки + файлы tkinter
+        model\\                  модель CLIP (если указана --model)
         src\\photo_renamer\\      код программы
         run.py
         config.example.json, names.example.txt
@@ -31,6 +32,7 @@ import zipfile
 from pathlib import Path
 
 PROJECT_FILES = ["run.py", "config.example.json", "names.example.txt"]
+MODEL_FILE = "clip-vit-b32-vision.onnx"   # см. src/photo_renamer/clipfeat.py
 PROJECT_DIRS = ["src"]
 # Файлы tkinter, которых нет в embeddable-дистрибутиве.
 # zlib1.dll есть не во всех сборках Python: официальная с python.org его содержит,
@@ -115,7 +117,7 @@ def wrong_platform_wheels(wheels: Path):
     return bad
 
 
-def plan(embed: Path, wheels: Path, tk_from: Path, out: Path):
+def plan(embed: Path, wheels: Path, tk_from: Path, out: Path, model: Path = None):
     """Человекочитаемый план сборки (используется и для --dry-run)."""
     lines = ["Куда собираем: %s" % out,
              "Python: %s" % embed.name,
@@ -127,6 +129,7 @@ def plan(embed: Path, wheels: Path, tk_from: Path, out: Path):
         if optional:
             lines.append("    необязательных файлов нет (обычно не мешает): " + ", ".join(optional))
     lines.append("Код программы: " + ", ".join(PROJECT_DIRS + PROJECT_FILES))
+    lines.append("Модель CLIP: %s" % (model if model else "НЕ КОПИРУЕТСЯ (программа будет работать слабее)"))
     bad = wrong_platform_wheels(wheels)
     if bad:
         lines.append("ВНИМАНИЕ: не для Python 3.8 / win_amd64: " + ", ".join(bad))
@@ -168,6 +171,17 @@ def verify_tkinter(python_dir: Path) -> None:
         raise BuildError("В собранном Python не хватает файлов tkinter: %s" % ", ".join(missing))
 
 
+def copy_model(model: Path, out: Path) -> str:
+    """Кладёт модель CLIP рядом с программой. Без неё программа работает на обычных признаках."""
+    source = model / MODEL_FILE if model.is_dir() else model
+    if not source.is_file():
+        raise BuildError("Не найден файл модели: %s (скачайте: python tools/get_clip_model.py)" % source)
+    target = out / "model"
+    target.mkdir(exist_ok=True)
+    shutil.copy2(source, target / MODEL_FILE)
+    return "%s (%.0f МБ)" % (MODEL_FILE, source.stat().st_size / 1e6)
+
+
 def copy_project(project: Path, out: Path) -> None:
     for name in PROJECT_DIRS:
         destination = out / name
@@ -186,7 +200,8 @@ def write_launchers(out: Path) -> None:
     (out / "Запуск с консолью (для ошибок).bat").write_text(CONSOLE_LAUNCHER, encoding="cp866")
 
 
-def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path) -> None:
+def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path,
+          model: Path = None) -> None:
     if out.exists():
         shutil.rmtree(out)
     python_dir = out / "python"
@@ -205,6 +220,8 @@ def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path) ->
     if tk_from is not None:
         verify_tkinter(python_dir)
     copy_project(project, out)
+    if model is not None:
+        print("Модель CLIP: " + copy_model(model, out))
     write_launchers(out)
     shutil.copy2(project / "dist_offline" / "Инструкция.txt", out / "Инструкция.txt")
     shutil.copy2(project / "dist_offline" / "check_install.py", out / "check_install.py")
@@ -220,6 +237,7 @@ def main(argv=None) -> int:
     parser.add_argument("--wheels", required=True, help="папка с .whl (см. download_wheels.py)")
     parser.add_argument("--tk-from", help=r'обычная установка Python 3.8.10, например C:\Program Files\Python38')
     parser.add_argument("--out", required=True, help="папка дистрибутива")
+    parser.add_argument("--model", help="папка или файл модели CLIP (см. tools/get_clip_model.py)")
     parser.add_argument("--project", default=str(Path(__file__).resolve().parent.parent),
                         help="папка проекта (по умолчанию — этот репозиторий)")
     parser.add_argument("--dry-run", action="store_true", help="только проверить и показать план")
@@ -228,16 +246,17 @@ def main(argv=None) -> int:
     embed, wheels = Path(args.embed), Path(args.wheels)
     tk_from = Path(args.tk_from) if args.tk_from else None
     out, project = Path(args.out), Path(args.project)
+    model = Path(args.model) if args.model else None
     try:
         check_inputs(embed, wheels, tk_from)
-        print(plan(embed, wheels, tk_from, out))
+        print(plan(embed, wheels, tk_from, out, model))
         if args.dry_run:
             print("\n--dry-run: ничего не записано.")
             return 0
         if os.name != "nt":
             print("\nВНИМАНИЕ: сборка рассчитана на Windows. Здесь она соберётся, "
                   "но проверить запуск можно только на Windows.")
-        build(embed, wheels, tk_from, out, project)
+        build(embed, wheels, tk_from, out, project, model)
     except BuildError as exc:
         print("ОШИБКА: %s" % exc)
         return 1

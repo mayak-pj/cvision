@@ -11,6 +11,11 @@ env:
 
 on:
   workflow_dispatch:        # запуск кнопкой на вкладке Actions
+    inputs:
+      model:
+        description: "Вложить модель CLIP (~335 МБ). Без неё распознавание заметно слабее"
+        type: boolean
+        default: true
   push:
     tags: ["v*"]            # и на каждый тег версии
 
@@ -52,15 +57,20 @@ jobs:
       - name: Скачать библиотеки (cp38, win_amd64)
         run: python dist_offline/download_wheels.py --dest wheels
 
+      - name: Скачать модель CLIP
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.model }}
+        run: python tools/get_clip_model.py --dest model
+
       - name: Собрать дистрибутив
         shell: pwsh
         run: |
           $tk = python -c "import sys; print(sys.prefix)"
+          $model = if (Test-Path "model/clip-vit-b32-vision.onnx") { @("--model", "model") } else { @() }
           python dist_offline/build_portable.py `
             --embed python-embed.zip `
             --wheels wheels `
             --tk-from "$tk" `
-            --out "dist/Переименование фото"
+            --out "dist/Переименование фото" @model
 
       - name: Проверить сборку (на Windows Server, не на Windows 7)
         shell: pwsh

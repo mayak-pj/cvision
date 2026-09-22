@@ -260,9 +260,11 @@ class MainWindow(tk.Tk):
                 if cancelled():
                     raise Cancelled()
 
+            extractor = app_config.extractor()
             try:
                 return grouping.analyze_project(
-                    [root], app_config.extractor(), app_config.match.weights, app_config.group_threshold,
+                    [root], extractor, app_config.match.for_features(extractor.encoder is not None),
+                    app_config.group_threshold,
                     feature_source=cache.extract_many, sort=app_config.sort, date_source=cache.shot_time,
                     on_folder=folder_started, on_progress=photo_read)
             finally:

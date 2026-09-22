@@ -4,7 +4,8 @@
 
 Проверяет то, что обычно ломается на рабочей машине без интернета и без прав администратора:
 версию Windows и Python, наличие библиотек, работу окна (tkinter), чтение JPEG, запись в logs
-и cache, а также сам алгоритм на маленьком проверочном изображении.
+и cache, работу модели CLIP (onnxruntime) с замером скорости, а также сам алгоритм
+на маленьком проверочном изображении.
 """
 
 import os
@@ -95,6 +96,45 @@ def jpeg_and_features():
     return "чтение JPEG и расчёт признаков работают"
 
 
+def clip_model():
+    """Главная проверка для распознавания: работает ли onnxruntime и грузится ли модель CLIP.
+
+    Без неё программа тоже работает, но заметно хуже: обычные признаки путаются, когда
+    свет или камера отличаются от эталонных. Поэтому это не ошибка, а замечание.
+    """
+    import time
+
+    import numpy
+    from PIL import Image
+
+    from photo_renamer import clipfeat, config as cfg
+
+    if not clipfeat.runtime_available():
+        notes.append("нет onnxruntime — CLIP не используется, распознавание будет слабее. "
+                     "Соберите дистрибутив с onnxruntime (см. dist_offline/README.md).")
+        return "не установлен (программа работает без него)"
+    config, _ = cfg.load_config()
+    path = config.clip_path()
+    if not os.path.isfile(path):
+        notes.append("нет файла модели %s — CLIP не используется. "
+                     "Скачайте его на машине с интернетом: python tools/get_clip_model.py" % path)
+        return "модель не найдена (программа работает без неё)"
+    encoder = clipfeat.load(path, config.clip_threads or None)
+    if encoder is None:
+        raise RuntimeError("onnxruntime есть, но модель не загрузилась: %s" % path)
+    image = Image.fromarray((numpy.random.RandomState(1).rand(400, 260, 3) * 255).astype("uint8"))
+    encoder.encode_one(image)                      # первый вызов прогревает сессию
+    started = time.time()
+    vectors = encoder.encode([image] * 4)
+    spent = (time.time() - started) / 4
+    if vectors.shape != (4, clipfeat.EMBEDDING_SIZE):
+        raise RuntimeError("модель вернула не то, что ожидалось: %s" % (vectors.shape,))
+    import onnxruntime
+
+    return "onnxruntime %s, %.0f мс на фото (~%.0f с на папку из 250 фото)" % (
+        onnxruntime.__version__, spent * 1000, spent * 250)
+
+
 def folders():
     for name in ("logs", "cache"):
         path = HERE / name
@@ -126,6 +166,7 @@ def main():
     check("Библиотеки", libraries)
     check("Окно (tkinter)", window)
     check("Чтение JPEG и признаки", jpeg_and_features)
+    check("Модель CLIP", clip_model)
     check("Папки logs и cache", folders)
     check("Настройки", settings)
     print("-" * 62)

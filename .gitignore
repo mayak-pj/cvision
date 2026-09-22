@@ -64,3 +64,8 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# --- модель CLIP ---
+# Файл модели весит ~335 МБ и качается отдельно (tools/get_clip_model.py).
+model/
+*.onnx

@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass, field, fields
 from typing import List, Optional, Tuple
 
+from . import clipfeat
 from .features import ALL_FEATURES, FeatureExtractor
 from .matcher import MatchConfig
 from .scanner import SORT_BY_EXIF, SORT_BY_NAME
@@ -34,6 +35,10 @@ class AppConfig:
     names_file: str = "names.txt"
     theme: str = "light"       # light | dark | system (переключается лампочкой в окне)
     cache_max_mb: float = 2048
+    # Файл модели CLIP рядом с программой. Если файла нет или не установлен onnxruntime,
+    # программа работает на обычных признаках (см. clipfeat.py).
+    clip_model: str = os.path.join("model", clipfeat.MODEL_FILE)
+    clip_threads: int = 0        # 0 — на усмотрение onnxruntime (обычно все ядра)
     group_threshold: float = 0.30
     review_thumb: int = 96     # высота строки-миниатюры в предпросмотре (Ctrl+колесо меняет)
 
@@ -44,9 +49,18 @@ class AppConfig:
         folder = self.cache_dir if os.path.isabs(self.cache_dir) else os.path.join(APP_DIR, self.cache_dir)
         return os.path.join(folder, "photos.sqlite")
 
+    def clip_path(self) -> str:
+        return self.clip_model if os.path.isabs(self.clip_model) else os.path.join(APP_DIR, self.clip_model)
+
     def extractor(self) -> FeatureExtractor:
         return FeatureExtractor(self.work_size, self.hash_size, self.hist_bins, self.rotations,
-                                white_balance=self.white_balance)
+                                white_balance=self.white_balance, encoder=self.encoder())
+
+    def encoder(self):
+        """Модель CLIP или None. Загружается один раз на объект настроек: сессия тяжёлая."""
+        if not hasattr(self, "_encoder"):
+            self._encoder = clipfeat.load(self.clip_path(), self.clip_threads or None)
+        return self._encoder
 
     def logs_path(self) -> str:
         return self.logs_dir if os.path.isabs(self.logs_dir) else os.path.join(APP_DIR, self.logs_dir)
@@ -104,6 +118,7 @@ _MATCH_KEYS = {
     "side_fill_max_distance": _number(0, 1.0),
     "side_fill_top_k": _number(1, 10, integer=True),
     "weights": _check_weights,
+    "weights_with_clip": _check_weights,
     "sequence_weight": _number(0, 3),
     "renumber_existing": lambda v: None if isinstance(v, bool) else "ожидается true или false",
     "strict_counts": lambda v: None if isinstance(v, bool) or v == "auto" else "допустимо true, false или \"auto\"",
@@ -126,6 +141,8 @@ _APP_KEYS = {
     "names_file": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к файлу",
     "cache_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
     "cache_max_mb": _number(50, 1024 * 1024),
+    "clip_model": lambda v: None if isinstance(v, str) else "ожидается путь к файлу модели",
+    "clip_threads": _number(0, 64, integer=True),
     "group_threshold": _number(0.01, 1.0),
     "review_thumb": _number(48, 400, integer=True),
 }
