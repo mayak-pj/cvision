@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Dict, List, Optional
 
-from .. import grouping, matcher, names as names_mod, oplog, renamer
+from .. import config as cfg, grouping, matcher, names as names_mod, oplog, renamer
 from ..cache import PhotoCache
 from ..reference import category_key, load_reference
 from ..report import build_report, format_report
@@ -19,7 +19,12 @@ from . import theme
 from .thumbgrid import to_photo
 
 TITLE = "Переименование папок"
-ROW_THUMB = 56
+# Размер миниатюр в строках таблицы: по умолчанию крупный, меняется Ctrl+колесом и кнопками
+# «−» и «+». Значение запоминается в настройках. Верхняя граница — размер миниатюры в кэше:
+# крупнее пришлось бы заново читать исходные файлы (на сетевых дисках это долго).
+MIN_THUMB, MAX_THUMB, THUMB_STEP = 48, 320, 24
+PREVIEW_SIZE = 260          # крупный показ выбранного фото справа
+NEIGHBOUR_SIZE = 96         # соседние кадры под ним
 STATUS_TEXT = {
     matcher.STATUS_OK: "распознано",
     matcher.STATUS_SIDE_RULE: "по правилу сторон",
@@ -53,7 +58,9 @@ class BatchWindow(tk.Toplevel):
         self.folder: Optional[grouping.FolderInfo] = None
         self.categories: List[str] = []
         self._photos: Dict[str, tk.PhotoImage] = {}
+        self._preview_photos: List[tk.PhotoImage] = []   # ссылки, иначе tkinter покажет пустоту
         self._row_index: Dict[str, int] = {}
+        self.thumb_size = int(getattr(app_config, "review_thumb", 96))
         self._busy = False
         self._cancel = False
         self._last_plan: Optional[renamer.RenamePlan] = None
@@ -75,24 +82,30 @@ class BatchWindow(tk.Toplevel):
         ttk.Label(top, textvariable=self.header_var, font="TkHeadingFont").pack(side="left")
         self.progress = ttk.Progressbar(top, length=260, mode="determinate")
         self.progress.pack(side="right")
+        zoom = ttk.Frame(top)
+        zoom.pack(side="right", padx=(0, 12))
+        ttk.Label(zoom, text="Размер фото:").pack(side="left", padx=(0, 4))
+        ttk.Button(zoom, text="−", width=3,
+                   command=lambda: self.set_thumb_size(self.thumb_size - THUMB_STEP)).pack(side="left")
+        ttk.Button(zoom, text="+", width=3,
+                   command=lambda: self.set_thumb_size(self.thumb_size + THUMB_STEP)).pack(side="left", padx=(2, 0))
 
         body = ttk.Frame(self, padding=(10, 0, 10, 0))
         body.pack(fill="both", expand=True)
 
         table = ttk.Frame(body)
         table.pack(side="left", fill="both", expand=True)
-        style = ttk.Style(self)
-        style.configure("Review.Treeview", rowheight=ROW_THUMB + 8)
+        self.style = ttk.Style(self)
         self.tree = ttk.Treeview(table, columns=("new", "confidence", "status"), selectmode="extended",
                                  style="Review.Treeview")
         self.tree.heading("#0", text="Фото")
         self.tree.heading("new", text="Новое имя")
         self.tree.heading("confidence", text="Уверенность")
         self.tree.heading("status", text="Состояние")
-        self.tree.column("#0", width=330)
         self.tree.column("new", width=330)
         self.tree.column("confidence", width=100, anchor="e", stretch=False)
         self.tree.column("status", width=170, stretch=False)
+        self._apply_thumb_size()
         scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -105,15 +118,29 @@ class BatchWindow(tk.Toplevel):
         for number in range(1, 4):  # 1, 2, 3 — выбрать кандидата с этим номером
             self.tree.bind("<Key-%d>" % number, lambda e, n=number: self.apply_candidate(n))
         self.tree.bind("<Key-0>", lambda e: self.exclude_selected())
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):  # Ctrl+колесо — размер фото
+            self.tree.bind(sequence, self._on_wheel)
         for key in ("<Delete>", "<BackSpace>"):
             self.tree.bind(key, lambda e: self.exclude_selected())
 
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
-        ttk.Label(side, text="Выбранные фото").pack(anchor="w")
+
+        # крупный показ выбранного фото и соседних кадров: по ним видно, что это за деталь
+        # и к какой серии относится снимок (соседи важны, когда сомнительные строки подняты наверх)
+        preview = ttk.LabelFrame(side, text="Выбранное фото", padding=4)
+        preview.pack(fill="x")
+        self.preview_image = ttk.Label(preview, anchor="center")
+        self.preview_image.pack()
+        self.preview_caption = ttk.Label(preview, wraplength=PREVIEW_SIZE + 40, justify="center",
+                                         font="TkHeadingFont")
+        self.preview_caption.pack(fill="x")
+        self.neighbours_frame = ttk.Frame(preview)
+        self.neighbours_frame.pack(fill="x", pady=(4, 0))
+
         ttk.Label(side, foreground="#555555", wraplength=300, justify="left",
                   text="Клавиши в таблице: 1, 2, 3 — выбрать кандидата, 0 — не переименовывать. "
-                       "После выбора переход к следующей строке.").pack(anchor="w", pady=(0, 6))
+                       "Ctrl+колесо — размер фото.").pack(anchor="w", pady=(6, 6))
         self.only_doubtful = tk.BooleanVar(value=False)
         ttk.Checkbutton(side, text="Показать только требующие проверки", variable=self.only_doubtful,
                         command=self.render_rows).pack(anchor="w")
@@ -128,7 +155,7 @@ class BatchWindow(tk.Toplevel):
         ttk.Entry(side, textvariable=self.search_var).pack(fill="x", pady=(2, 4))
         list_frame = ttk.Frame(side)
         list_frame.pack(fill="both", expand=True)
-        self.categories_list = tk.Listbox(list_frame, exportselection=False, activestyle="none", height=16, width=34)
+        self.categories_list = tk.Listbox(list_frame, exportselection=False, activestyle="none", height=8, width=34)
         cat_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.categories_list.yview)
         self.categories_list.configure(yscrollcommand=cat_scroll.set)
         self.categories_list.pack(side="left", fill="both", expand=True)
@@ -149,6 +176,7 @@ class BatchWindow(tk.Toplevel):
         self.apply_btn.pack(side="left")
         self.close_btn = ttk.Button(bottom, text="Закрыть", command=self.close)
         self.close_btn.pack(side="left", padx=(12, 0))
+        self._show_preview(None)
 
     # --- ход обработки ------------------------------------------------------------------
 
@@ -265,6 +293,40 @@ class BatchWindow(tk.Toplevel):
             text += "   (порядок съёмки не совпадает с порядком имён — используется порядок съёмки)"
         self.status_var.set(text)
 
+    def _apply_thumb_size(self) -> None:
+        self.style.configure("Review.Treeview", rowheight=self.thumb_size + 8)
+        self.tree.column("#0", width=self.thumb_size + 280)
+
+    def set_thumb_size(self, size: int) -> None:
+        """Размер фото в строках таблицы. Миниатюры перерисовываются из кэша, файлы не перечитываются."""
+        size = max(MIN_THUMB, min(MAX_THUMB, int(size)))
+        if size == self.thumb_size:
+            return
+        self.thumb_size = size
+        self.app_config.review_thumb = size
+        self._photos.clear()
+        self._apply_thumb_size()
+        self.render_rows()
+        self.load_thumbnails()
+
+    def _on_wheel(self, event) -> None:
+        """Ctrl+колесо — размер фото. Без Ctrl прокрутка остаётся обычной."""
+        if not event.state & 0x0004:
+            return None
+        delta = event.delta if event.delta else (120 if getattr(event, "num", 0) == 4 else -120)
+        self.set_thumb_size(self.thumb_size + (THUMB_STEP if delta > 0 else -THUMB_STEP))
+        return "break"
+
+    def _thumbnail(self, index: int, size: int) -> Optional[tk.PhotoImage]:
+        """Миниатюра фото папки нужного размера или None, если файл не читается."""
+        if self.match is None or not 0 <= index < len(self.match.photos):
+            return None
+        try:
+            image = self.cache.thumbnail(os.path.join(self.folder.path, self.match.photos[index].filename))
+            return to_photo(image, size)
+        except Exception:
+            return None
+
     def load_thumbnails(self) -> None:
         """Подгружает миниатюры по одной, не блокируя окно."""
         rows = list(self._row_index.items())
@@ -276,7 +338,7 @@ class BatchWindow(tk.Toplevel):
             photo = self.match.photos[index]
             try:
                 image = self.cache.thumbnail(os.path.join(self.folder.path, photo.filename))
-                self._photos[photo.filename] = to_photo(image, ROW_THUMB)
+                self._photos[photo.filename] = to_photo(image, self.thumb_size)
                 if self.tree.exists(iid):
                     self.tree.item(iid, image=self._photos[photo.filename])
             except Exception:
@@ -340,23 +402,41 @@ class BatchWindow(tk.Toplevel):
             return photo.filename + " (имя не меняется)"
         return photo.filename + " — " + STATUS_TEXT.get(photo.status, "")
 
-    def _show_neighbours(self, index: int) -> None:
-        """Соседи по порядку съёмки: по ним видно, к какой серии относится снимок.
-        Это важно, когда сомнительные строки подняты наверх и соседи не видны рядом."""
-        frame = ttk.LabelFrame(self.candidates_frame, text="Соседи по съёмке", padding=4)
-        frame.pack(fill="x", pady=(6, 0))
-        for shift, title in ((-1, "до"), (0, "это фото"), (1, "после")):
-            text = "%s: %s" % (title, self._describe(index + shift))
-            label = ttk.Label(frame, text=text, wraplength=290, justify="left")
-            if shift == 0:
-                label.configure(font="TkHeadingFont")
-            label.pack(anchor="w")
+    def _show_preview(self, index: Optional[int]) -> None:
+        """Крупный показ выбранного фото и соседних кадров по порядку съёмки.
+
+        Соседи важны, когда сомнительные строки подняты наверх: рядом в таблице стоят
+        не соседние кадры, а по соседним кадрам как раз видно, к какой серии относится снимок.
+        """
+        for widget in self.neighbours_frame.winfo_children():
+            widget.destroy()
+        self._preview_photos = []
+        if index is None:
+            self.preview_image.configure(image="", text="Выберите фото в таблице")
+            self.preview_caption.configure(text="")
+            return
+        big = self._thumbnail(index, PREVIEW_SIZE)
+        self.preview_image.configure(image=big or "", text="" if big else "фото не прочитано")
+        if big is not None:
+            self._preview_photos.append(big)
+        self.preview_caption.configure(text=self._describe(index))
+        for shift, title in ((-1, "до"), (1, "после")):
+            cell = ttk.Frame(self.neighbours_frame)
+            cell.pack(side="left", expand=True)
+            small = self._thumbnail(index + shift, NEIGHBOUR_SIZE)
+            image_label = ttk.Label(cell, image=small or "", text="" if small else "—", anchor="center")
+            image_label.pack()
+            if small is not None:
+                self._preview_photos.append(small)
+            ttk.Label(cell, text="%s: %s" % (title, self._describe(index + shift)),
+                      wraplength=NEIGHBOUR_SIZE + 40, justify="center").pack()
 
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
             widget.destroy()
         indexes = self._selected_indexes()
         if len(indexes) != 1:
+            self._show_preview(None)
             ttk.Label(self.candidates_frame, text="Выбрано фото: %d" % len(indexes)).pack(anchor="w")
             return
         photo = self.match.photos[indexes[0]]
@@ -368,7 +448,7 @@ class BatchWindow(tk.Toplevel):
                 text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
                 ttk.Button(self.candidates_frame, text=text,
                            command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
-        self._show_neighbours(photo.index)
+        self._show_preview(photo.index)
 
     def _refresh_categories(self) -> None:
         self.categories_list.delete(0, "end")
@@ -468,6 +548,10 @@ class BatchWindow(tk.Toplevel):
             return
         self.log.close()
         self.cache.close()
+        try:                       # выбранный размер фото должен сохраниться до следующего запуска
+            cfg.save_config(self.app_config)
+        except OSError:
+            pass
         if self.on_done:
             self.on_done()
         self.destroy()

@@ -212,12 +212,36 @@ def test_neighbours_are_shown_for_selected_photo(batch):
     win.sort_doubtful.set(False)          # порядок съёмки
     win.render_rows()
     select_row(win, 2)
-    texts = all_labels(win.candidates_frame)
+    selected = win.match.photos[2]
+    assert (selected.new_name or selected.filename) in win.preview_caption.cget("text")
+    texts = all_labels(win.neighbours_frame)
     assert any(t.startswith("до: ") for t in texts)
-    assert any(t.startswith("это фото: ") for t in texts)
     assert any(t.startswith("после: ") for t in texts)
     previous = win.match.photos[1]
     assert any((previous.new_name or previous.filename) in t for t in texts)
+
+
+def test_photo_size_is_adjustable_and_remembered(batch):
+    """Крупные фото: размер меняется кнопками и Ctrl+колесом, не выходит за границы и запоминается."""
+    win, _ = batch
+    start = win.thumb_size
+    win.set_thumb_size(start + review_mod.THUMB_STEP)
+    assert win.thumb_size == start + review_mod.THUMB_STEP
+    assert win.app_config.review_thumb == win.thumb_size       # сохранится в настройках при закрытии
+    assert int(win.style.lookup("Review.Treeview", "rowheight")) == win.thumb_size + 8
+
+    win.set_thumb_size(10_000)
+    assert win.thumb_size == review_mod.MAX_THUMB
+    win.set_thumb_size(1)
+    assert win.thumb_size == review_mod.MIN_THUMB
+
+
+def test_preview_is_empty_without_single_selection(batch):
+    win, _ = batch
+    win.render_rows()
+    win.tree.selection_set(win.tree.get_children()[:2])       # выбрано два фото сразу
+    win._on_row_select()
+    assert win.preview_caption.cget("text") == ""
 
 
 def test_warning_before_renaming_with_unresolved_photos(batch, monkeypatch):

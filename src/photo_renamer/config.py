@@ -35,6 +35,7 @@ class AppConfig:
     theme: str = "light"       # light | dark | system (переключается лампочкой в окне)
     cache_max_mb: float = 2048
     group_threshold: float = 0.30
+    review_thumb: int = 96     # высота строки-миниатюры в предпросмотре (Ctrl+колесо меняет)
 
     def names_path(self) -> str:
         return self.names_file if os.path.isabs(self.names_file) else os.path.join(APP_DIR, self.names_file)
@@ -125,6 +126,7 @@ _APP_KEYS = {
     "cache_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
     "cache_max_mb": _number(50, 1024 * 1024),
     "group_threshold": _number(0.01, 1.0),
+    "review_thumb": _number(48, 400, integer=True),
 }
 
 
