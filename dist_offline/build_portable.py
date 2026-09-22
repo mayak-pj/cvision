@@ -141,6 +141,28 @@ def plan(embed: Path, wheels: Path, tk_from: Path, out: Path, model: Path = None
     return "\n".join(lines)
 
 
+def flatten_wheel_data(site_packages: Path) -> None:
+    """Переносит содержимое «*.data/purelib» и «*.data/platlib» прямо в site-packages.
+
+    Так делает pip при установке: эти части колеса относятся к самому site-packages.
+    При простой распаковке они остаются вложенными, и модуль не находится. Именно так
+    устроено колесо onnxruntime: без этого шага «import onnxruntime» не работает.
+    """
+    for data_dir in sorted(site_packages.glob("*.data")):
+        for scheme in ("purelib", "platlib"):
+            source = data_dir / scheme
+            if not source.is_dir():
+                continue
+            for item in list(source.iterdir()):
+                target = site_packages / item.name
+                if target.is_dir():
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+                shutil.move(str(item), str(target))
+            source.rmdir()
+
+
 def extract_wheels(wheels: Path, site_packages: Path) -> int:
     """Колесо — это zip: распаковываем прямо в site-packages, pip на рабочей машине не нужен."""
     site_packages.mkdir(parents=True, exist_ok=True)
@@ -149,6 +171,7 @@ def extract_wheels(wheels: Path, site_packages: Path) -> int:
         with zipfile.ZipFile(wheel) as archive:
             archive.extractall(site_packages)
         count += 1
+    flatten_wheel_data(site_packages)
     return count
 
 
