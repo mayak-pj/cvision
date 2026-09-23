@@ -456,7 +456,7 @@ class MainWindow(tk.Tk):
         if not target.targets:
             messagebox.showinfo(TITLE, "В этой группе нет папок для переименования.", parent=self)
             return
-        BatchWindow(self, target, self.app_config, on_done=self.refresh)
+        BatchWindow(self, target, self.app_config, on_done=self.refresh, names=self.names)
 
     def on_close(self) -> None:
         if self._busy or self.worker.busy():

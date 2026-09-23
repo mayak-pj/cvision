@@ -275,11 +275,14 @@ def test_add_and_remove_category(batch, monkeypatch, tmp_path):
     reference_count = len(win.reference_categories)
 
     monkeypatch.setattr(review_mod.simpledialog, "askstring", lambda *a, **k: "Планка индикации")
-    monkeypatch.setattr(review_mod.simpledialog, "askinteger", lambda *a, **k: 2)
     win.add_category()
     assert "Планка индикации" in win.categories
     assert len(win.categories) == reference_count + 1
-    assert "Планка индикации" in win.names.names()          # запомнилось в names.txt
+
+    # имя должно пережить закрытие окна: проверяем сам файл, а не список в памяти
+    from photo_renamer.names import NamesList
+
+    assert "Планка индикации" in NamesList(win.app_config.names_path()).names()
 
     select_row(win, 0)
     filename = win.tree.item(win.tree.get_children()[0], "text").strip()
@@ -301,3 +304,29 @@ def test_reference_category_is_not_removed(batch, monkeypatch):
     win.remove_category()
     assert said and "эталона" in said[0]
     assert win.reference_categories[0] in win.categories
+
+
+def test_categories_are_shared_with_the_reference_editor(tmp_path):
+    """Список категорий у окон общий: добавленное в предпросмотре видно и в редакторе эталона."""
+    from photo_renamer.names import NamesList
+    from photo_renamer.gui import review as review_module
+
+    shared = NamesList(str(tmp_path / "names.txt"))
+    config = cfg.AppConfig()
+    config.names_file = str(tmp_path / "names.txt")
+    window = review_module.BatchWindow.__new__(review_module.BatchWindow)   # без создания окна
+    window.app_config = config
+    window.names = shared
+    assert window.names is shared
+
+
+def test_added_category_survives_restart(batch, monkeypatch):
+    """Добавили, закрыли окно, открыли снова — категория на месте."""
+    win, _ = batch
+    from photo_renamer.names import NamesList
+
+    monkeypatch.setattr(review_mod.simpledialog, "askstring", lambda *a, **k: "Съемный накопитель HDD")
+    win.add_category()
+    again = NamesList(win.app_config.names_path())
+    assert "Съемный накопитель HDD" in again.names()
+    assert again.sides_for("Съемный накопитель HDD") == 1

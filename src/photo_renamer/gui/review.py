@@ -42,10 +42,13 @@ class Cancelled(Exception):
 
 
 class BatchWindow(tk.Toplevel):
-    def __init__(self, master, group: grouping.FolderGroup, app_config, on_done=None):
+    def __init__(self, master, group: grouping.FolderGroup, app_config, on_done=None, names=None):
         super().__init__(master)
         self.group = group
         self.app_config = app_config
+        # список категорий общий с редактором эталона: иначе два окна держат по своей копии
+        # и то, что добавлено в одном, затирается сохранением из другого
+        self.names = names if names is not None else names_mod.NamesList(app_config.names_path())
         self.on_done = on_done
         self.cache = PhotoCache(app_config.cache_path(), app_config.cache_max_mb)
         self.log = oplog.RunLog(app_config.logs_path(), oplog.folder_label(group.reference.path) + "_группа")
@@ -203,7 +206,6 @@ class BatchWindow(tk.Toplevel):
         finally:
             self._busy = False
         self.reference_categories = [c.name for c in self.model.categories]
-        self.names = names_mod.NamesList(self.app_config.names_path())
         self.categories = self._all_categories()
         self.log.write_text("Эталон: %s\nПапок в группе: %d" % (self.group.reference.path, self.total))
         for warning in self.model.warnings:
@@ -435,18 +437,16 @@ class BatchWindow(tk.Toplevel):
                                       initialvalue=self.search_var.get().strip())
         if not name or not name.strip():
             return
-        sides = simpledialog.askinteger(TITLE, "Сколько ракурсов у этой детали?", parent=self,
-                                        initialvalue=1, minvalue=1, maxvalue=9)
-        if not sides:
-            return
         try:
-            name = self.names.add(name, sides)
+            # число ракурсов не спрашиваем: для знакомого имени оно уже запомнено, для нового
+            # берётся 1. Ракурсы задаются в редакторе эталона, где их видно по самим фото.
+            name = self.names.add(name, self.names.sides_for(name))
         except ValueError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self)
             return
         self.names.save()
         if self.match is not None:
-            matcher.add_category(self.match, name, sides)
+            matcher.add_category(self.match, name, self.names.sides_for(name))
         self.categories = self._all_categories()
         self.search_var.set("")
         self._refresh_categories()
