@@ -330,3 +330,22 @@ def test_added_category_survives_restart(batch, monkeypatch):
     again = NamesList(win.app_config.names_path())
     assert "Съемный накопитель HDD" in again.names()
     assert again.sides_for("Съемный накопитель HDD") == 1
+
+
+def test_double_click_opens_the_photo_large(batch, monkeypatch):
+    """Двойной клик по строке показывает фото крупно — так же, как в редакторе эталона."""
+    win, root_dir = batch
+    opened = []
+    monkeypatch.setattr(review_mod, "LargeView",
+                        lambda master, folder, photos, index, cache: opened.append((folder, photos[index])))
+    iid = win.tree.get_children()[1]
+    win.tree.selection_set(iid)
+    win._open_large()
+    assert opened == [(str(root_dir / "SN2"), win.tree.item(iid, "text").strip())]
+
+
+def test_double_click_without_selection_does_nothing(batch, monkeypatch):
+    win, _ = batch
+    monkeypatch.setattr(review_mod, "LargeView", lambda *a, **k: (_ for _ in ()).throw(AssertionError("открыто зря")))
+    win.tree.selection_remove(*win.tree.get_children())
+    assert win._open_large() == "break"

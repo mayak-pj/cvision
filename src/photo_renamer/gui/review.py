@@ -17,6 +17,7 @@ from ..reference import category_key, load_reference
 from ..report import build_report, format_report
 from . import theme
 from ..scanner import natural_key
+from .photoview import LargeView
 from .thumbgrid import to_photo
 
 TITLE = "Переименование папок"
@@ -143,6 +144,9 @@ class BatchWindow(tk.Toplevel):
             self.tree.bind(sequence, self._on_wheel)
         for key in ("<Delete>", "<BackSpace>"):
             self.tree.bind(key, lambda e: self.exclude_selected())
+        # двойной клик и Enter — посмотреть фото крупно, как в редакторе эталона
+        self.tree.bind("<Double-Button-1>", self._open_large)
+        self.tree.bind("<Return>", self._open_large)
 
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
@@ -364,6 +368,19 @@ class BatchWindow(tk.Toplevel):
         self.after(1, load, 0)
 
     # --- правка ----------------------------------------------------------------------
+
+    def _open_large(self, event=None):
+        """Показывает выбранное фото крупно: стрелки листают папку, Esc закрывает."""
+        indexes = self._selected_indexes()
+        if event is not None and getattr(event, "y", None) is not None:
+            row = self.tree.identify_row(event.y)
+            if row in self._row_index:
+                indexes = [self._row_index[row]]
+        if not indexes or self.match is None or self.folder is None:
+            return "break"
+        names = [p.filename for p in self.match.photos]
+        LargeView(self, self.folder.path, names, indexes[0], self.cache)
+        return "break"
 
     def _selected_indexes(self) -> List[int]:
         return [self._row_index[iid] for iid in self.tree.selection() if iid in self._row_index]
