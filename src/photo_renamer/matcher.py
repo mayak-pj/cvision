@@ -72,6 +72,9 @@ class MatchConfig:
     always_propose: bool = True
     max_distance: float = 0.40          # дальше этого расстояния фото не относится ни к одной категории
     extra_penalty: float = 0.05         # штраф за экземпляр сверх количества в эталоне
+    # Добавка к штрафу, если столько фото этой категории пользователь уже подтвердил сам:
+    # значит, деталей такого вида больше нет, и лишний экземпляр почти наверняка ошибка.
+    closed_penalty: float = 0.25
     temperature: float = 0.05           # «резкость» % уверенности
     min_confidence: float = 50.0        # ниже — фото считается неопознанным
     # Сколько кандидатов показывать в отчёте и журнале. Запоминаются все категории по порядку
@@ -382,6 +385,23 @@ def solve(result: FolderMatch) -> None:
     renumber(result)
 
 
+def _confirmed_capacity(result: FolderMatch, model: ReferenceModel) -> np.ndarray:
+    """Сколько фото каждой категории подтвердил человек: уже названные и заданные вручную.
+
+    Догадки программы сюда не входят: закрывать категорию должна только уверенная пометка.
+    """
+    confirmed = np.zeros(len(model.categories), dtype=int)
+    for cat, _, _ in result.fixed.values():
+        index = model.cat_index.get(cat.key)
+        if index is not None:
+            confirmed[index] += 1
+    for key in result.manual.values():
+        index = model.cat_index.get(key) if key else None
+        if index is not None:
+            confirmed[index] += 1
+    return confirmed
+
+
 def _occupied_capacity(model: ReferenceModel, fixed) -> np.ndarray:
     """fixed — последовательность (категория, экземпляр, сторона) уже названных фото."""
     used = np.zeros(len(model.categories), dtype=int)
@@ -473,7 +493,14 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
     # в строгом режиме лишних мест нет: состав папки считается таким же, как в эталоне
     extra_cap = np.zeros(n_cat, dtype=int) if strict else np.full(n_cat, n)
     col_cat = np.concatenate([np.repeat(np.arange(n_cat), base_cap), np.repeat(np.arange(n_cat), extra_cap)])
-    col_cost = np.concatenate([np.zeros(base_cap.sum()), np.full(extra_cap.sum(), config.extra_penalty)])
+    # Категория, у которой пользователь подтвердил столько же фото, сколько их в эталоне,
+    # считается закрытой: лишний экземпляр у неё стоит намного дороже обычного. Совсем
+    # запрещать нельзя — в папке бывает больше деталей, чем в эталоне, — но появляться
+    # «Датчик вскрытия корпуса 2» при одном отмеченном датчике больше не должен.
+    closed = _confirmed_capacity(result, model) >= model.capacity
+    extra_price = np.where(closed, config.extra_penalty + config.closed_penalty, config.extra_penalty)
+    col_cost = np.concatenate([np.zeros(base_cap.sum()),
+                               np.repeat(extra_price, extra_cap)])
     # max_distance — строгая граница: дальше неё категория запрещена. «Неопознано» стоит
     # max_distance + штраф, поэтому фото в пределах границы всегда получает категорию,
     # хотя бы как лишний экземпляр. Штраф влияет только на выбор между категориями.

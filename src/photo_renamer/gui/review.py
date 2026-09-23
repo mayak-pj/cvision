@@ -26,6 +26,7 @@ TITLE = "Переименование папок"
 # «−» и «+». Значение запоминается в настройках. Верхняя граница — размер миниатюры в кэше:
 # крупнее пришлось бы заново читать исходные файлы (на сетевых дисках это долго).
 MIN_THUMB, MAX_THUMB, THUMB_STEP = 48, 320, 24
+ALTERNATIVES = 3          # сколько вариантов показывать под цифрами; следующая цифра — отказ
 BUTTON_GAP = 4            # одинаковый зазор между всеми кнопками окна
 SIDE_PADDING = 44         # полоса прокрутки, рамки и отступы правой колонки
 MIN_SIDE_WIDTH, MAX_SIDE_WIDTH = 260, 460
@@ -149,9 +150,9 @@ class BatchWindow(tk.Toplevel):
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_row_select())
         # 1 и 2 — выбрать кандидата, 3 — не переименовывать: пометка «не переименовывать» нужна
         # чаще третьего кандидата, а под рукой должны быть три соседние клавиши
-        for number in (1, 2):
+        for number in range(1, ALTERNATIVES + 1):
             self.tree.bind("<Key-%d>" % number, lambda e, n=number: self.apply_candidate(n))
-        for key in ("<Key-3>", "<Key-0>"):
+        for key in ("<Key-%d>" % (ALTERNATIVES + 1), "<Key-0>"):
             self.tree.bind(key, lambda e: self.exclude_selected())
         for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):  # Ctrl+колесо — размер фото
             self.tree.bind(sequence, self._on_wheel)
@@ -264,6 +265,8 @@ class BatchWindow(tk.Toplevel):
         finally:
             self._busy = False
         self.resort()
+        self._select_position(0)          # новая папка открывается с первой строки
+        self.tree.yview_moveto(0)
         self.load_thumbnails()
 
     COLUMN_TITLES = (("#0", "Фото"), ("new", "Новое имя"),
@@ -531,13 +534,14 @@ class BatchWindow(tk.Toplevel):
         return settled
 
     def _exhausted_categories(self) -> set:
-        """Категории, которых в папке больше быть не может: состав совпадает с эталоном,
-        а вы уже подтвердили столько фото, сколько их в эталоне.
+        """Категории, которых в папке, скорее всего, больше нет: вы уже подтвердили столько
+        фото, сколько их в эталоне.
 
         Считаются только подтверждённые вами фото, а не догадки программы: иначе неверная
-        догадка закрывала бы категорию, и выбрать её стало бы негде.
+        догадка закрывала бы категорию, и выбрать её стало бы негде. Из списка категорий
+        внизу такая категория не исчезает — её всегда можно выбрать вручную.
         """
-        if self.match is None or not self.match.strict:
+        if self.match is None:
             return set()
         capacity = {c.name: len(c.photos) for c in self.model.categories}
         settled = self._settled_categories()
@@ -587,13 +591,14 @@ class BatchWindow(tk.Toplevel):
             ttk.Label(self.candidates_frame, text="Других вариантов нет").pack(anchor="w")
         else:
             ttk.Label(self.candidates_frame, text="Похоже ещё на:").pack(anchor="w")
-            for number, candidate in enumerate(alternatives[:2], start=1):   # 3 занята под отказ
+            for number, candidate in enumerate(alternatives[:ALTERNATIVES], start=1):
                 text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
                 ttk.Button(self.candidates_frame, text=text,
                            style="Candidate.TButton",
                            command=lambda c=candidate.category: self.apply_category(c)).pack(
                     fill="x", pady=(0, BUTTON_GAP))
-        ttk.Button(self.candidates_frame, text="3 — Не переименовывать", style="Candidate.TButton",
+        ttk.Button(self.candidates_frame, text="%d — Не переименовывать" % (ALTERNATIVES + 1),
+                   style="Candidate.TButton",
                    command=self.exclude_selected).pack(fill="x", pady=(0, BUTTON_GAP))
 
     def _all_categories(self) -> List[str]:

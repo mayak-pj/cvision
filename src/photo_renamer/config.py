@@ -114,6 +114,7 @@ _MATCH_KEYS = {
     "always_propose": lambda v: None if isinstance(v, bool) else "ожидается true или false",
     "max_distance": _number(0.01, 1.0),
     "extra_penalty": _number(0, 1.0),
+    "closed_penalty": _number(0, 2.0),
     "temperature": _number(0.001, 1.0),
     "top_n": _number(1, 10, integer=True),
     "side_fill_max_distance": _number(0, 1.0),

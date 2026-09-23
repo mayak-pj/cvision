@@ -269,14 +269,14 @@ def test_sorting_by_status_groups_doubtful_together(batch):
     assert states == sorted(states)
 
 
-def test_only_two_candidates_are_numbered(batch):
-    """Клавиши 1 и 2 — кандидаты, 3 — отказ; третьей кнопки-кандидата быть не должно."""
+def test_candidates_are_numbered_and_last_is_refusal(batch):
+    """Цифры 1…N — варианты, следующая цифра — отказ."""
     win, _ = batch
     select_row(win, 0)
     texts = [w.cget("text") for w in win.candidates_frame.winfo_children() if w.cget("text")]
-    numbered = [t for t in texts if t.startswith(("1 —", "2 —", "3 —"))]
-    assert numbered[-1] == "3 — Не переименовывать"
-    assert len([t for t in texts if "%" in t]) <= 2
+    numbered = [t for t in texts if t[0].isdigit()]
+    assert numbered[-1] == "%d — Не переименовывать" % (review_mod.ALTERNATIVES + 1)
+    assert len([t for t in texts if "%" in t]) <= review_mod.ALTERNATIVES
 
 
 def test_add_and_remove_category(batch, monkeypatch, tmp_path):
@@ -390,15 +390,13 @@ def test_exhausted_category_is_not_offered(batch):
     win, _ = batch
     from photo_renamer import matcher
 
-    win.match.strict = True                       # состав папки совпадает с эталоном
     full = win.reference_categories[0]            # категория с одним фото в эталоне
     other = next(p for p in win.match.photos if not p.identified or p.category.name != full)
     matcher.set_category(win.match, win.match.photos[0].index, category_key_of(full))
     assert full in win._exhausted_categories()
     assert all(c.category != full for c in win._alternatives(other))
-
-    win.match.strict = False                      # состав не совпадает — ограничение снимается
-    assert win._exhausted_categories() == set()
+    # из списка категорий внизу она никуда не девается: выбрать вручную можно всегда
+    assert full in win.categories
 
 
 def category_key_of(name):
@@ -410,7 +408,6 @@ def category_key_of(name):
 def test_exhausted_rule_ignores_guesses(batch):
     """Догадки программы категорию не закрывают: иначе ошибка отняла бы возможность её выбрать."""
     win, _ = batch
-    win.match.strict = True
     guessed = [p.category.name for p in win.match.photos if p.identified and p.status != "manual"]
     assert win._exhausted_categories() == set() or all(name not in win._exhausted_categories()
                                                        for name in guessed)
@@ -564,3 +561,15 @@ def test_row_order_does_not_change_after_edits(batch):
 
     win.sort_by("confidence")               # порядок меняется только по щелчку на заголовке
     assert [win.tree.item(iid, "text").strip() for iid in win.tree.get_children()] != before
+
+
+def test_new_folder_starts_from_the_first_row(batch):
+    """После «Пропустить папку» окно показывает первую деталь, а не конец прошлого списка."""
+    win, _ = batch
+    win.tree.selection_set(win.tree.get_children()[-1])     # были в конце списка
+    win._on_row_select()
+    win.queue.append(win.folder)                            # в очереди снова есть папка
+    win.total += 1
+    win.skip_folder()
+    assert win.tree.selection() and win.tree.selection()[0] == win.tree.get_children()[0]
+    assert win.tree.yview()[0] == 0.0                       # и прокрутка в начале списка
