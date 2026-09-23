@@ -82,11 +82,6 @@ class MatchConfig:
     # голосуют, получает штраф к расстоянию. 0 — не учитывать.
     block_weight: float = 0.02          # подобрано по ручной разметке (docs/decisions.md)
     block_span: int = 8                 # сколько соседних кадров с каждой стороны подсказывают категорию
-    # Папка из другой съёмки: во сколько раз фото могут быть дальше от своей категории, чем
-    # категории эталона отстоят друг от друга. Измерено на реальных проектах: подходящие папки —
-    # 0.7–0.9, папки из другой съёмки — 1.2 и 1.4.
-    reference_gap_warning: float = 1.1
-
     def for_features(self, has_clip: bool) -> Dict[str, float]:
         """Веса под то, что реально посчитано: с моделью CLIP — свой набор, без неё — обычный."""
         return dict(self.weights_with_clip if has_clip else self.weights)
@@ -199,27 +194,6 @@ class ReferenceModel:
             adapted[name] = w / min(max(growth, 1.0), 4.0) ** power
         return adapted
 
-    SEPARATION_SAMPLE = 300   # больше для оценки не нужно, а большой эталон считался бы долго
-
-    def separation(self, weights: Dict[str, float]) -> float:
-        """Насколько категории эталона отличаются друг от друга при этих весах.
-
-        Медиана расстояния от эталонного фото до ближайшего фото ДРУГОЙ категории. Это мера
-        «разрешающей способности» эталона: если фото папки дальше от своей категории, чем
-        категории эталона отстоят друг от друга, узнавать нечего — папка снята в других условиях.
-        """
-        if self.extractor is None or len(self.ref_features) < 2:
-            return 0.0
-        step = max(1, len(self.ref_features) // self.SEPARATION_SAMPLE)
-        sample = self.ref_features[::step]
-        cats = self.ref_cat[::step]
-        comps = self.extractor.distance_components(sample, sample)
-        comps = {name: m * self.scales.get(name, 1.0) for name, m in comps.items()}
-        matrix = feat.combine(comps, weights)
-        other = np.where(cats[:, None] != cats[None, :], matrix, np.inf).min(axis=1)
-        other = other[np.isfinite(other)]
-        return float(np.median(other)) if other.size else 0.0
-
     @classmethod
     def build(cls, reference: Reference, extractor: feat.FeatureExtractor, on_progress=None,
               feature_source=None) -> "ReferenceModel":
@@ -269,8 +243,6 @@ class FolderMatch:
     feature_row: Dict[int, int]  # индекс фото → строка в cat_dist/side_dist
     warnings: List[str] = field(default_factory=list)
     strict: bool = False         # применён строгий режим (состав совпадает с эталоном)
-    reference_gap: float = 0.0   # медиана расстояния фото папки до ближайшей категории эталона
-    reference_separation: float = 0.0  # насколько категории эталона отличаются друг от друга
     weights_used: Dict[str, float] = field(default_factory=dict)  # веса после подстройки под папку
     fixed: Dict[int, tuple] = field(default_factory=dict)           # уже названные по шаблону фото
     manual: Dict[int, Optional[str]] = field(default_factory=dict)  # выбор пользователя: ключ категории или None
@@ -356,19 +328,7 @@ def match_features(
 
     result = FolderMatch(folder, photos, model, config, cat_dist, side_dist, feature_row,
                          weights_used=weights_used, fixed=dict(fixed))
-    if cat_dist.size:
-        result.reference_gap = float(np.median(cat_dist.min(axis=1)))
-        result.reference_separation = model.separation(weights_used)
     solve(result)
-    if (result.reference_separation > 0 and len(rows) >= ReferenceModel.MIN_PHOTOS_TO_ADAPT
-            and result.reference_gap > config.reference_gap_warning * result.reference_separation):
-        # Папка снята в других условиях (свет, камера): фото дальше от своей категории, чем
-        # категории эталона отстоят друг от друга. Сравнивать с этим эталоном почти бесполезно.
-        result.warnings.insert(0,
-            "Папка мало похожа на эталон: её фото в %.1f раза дальше от категорий, чем категории "
-            "эталона отличаются друг от друга. Скорее всего, она снята в других условиях (свет, "
-            "камера), и для неё нужен свой эталон — посмотрите разбиение на группы в первом окне."
-            % (result.reference_gap / result.reference_separation))
     return result
 
 

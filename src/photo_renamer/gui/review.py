@@ -250,9 +250,6 @@ class BatchWindow(tk.Toplevel):
             self._busy = False
         self.render_rows()
         self.load_thumbnails()
-        mismatch = self._mismatch_warning()
-        if mismatch:
-            messagebox.showwarning(TITLE, mismatch + "\n\nПапку можно пропустить.", parent=self)
 
     def _display_photos(self) -> List:
         photos = [p for p in self.match.photos if not self.only_doubtful.get() or self._is_doubtful(p)]
@@ -300,18 +297,7 @@ class BatchWindow(tk.Toplevel):
             text += "   (состав совпадает с эталоном: имя предложено каждому фото)"
         if self.folder is not None and self.folder.scan.order_differs:
             text += "   (порядок съёмки не совпадает с порядком имён — используется порядок съёмки)"
-        if self._mismatch_warning():
-            text += "   ВНИМАНИЕ: папка мало похожа на эталон"
         self.status_var.set(text)
-
-    def _mismatch_warning(self) -> Optional[str]:
-        """Предупреждение матчера о том, что эталон папке не подходит (папка из другой съёмки)."""
-        if self.match is None:
-            return None
-        for warning in self.match.warnings:
-            if warning.startswith("Папка мало похожа на эталон"):
-                return warning
-        return None
 
     def _apply_thumb_size(self) -> None:
         self.style.configure("Review.Treeview", rowheight=self.thumb_size + 8)

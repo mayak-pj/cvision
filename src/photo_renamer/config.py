@@ -126,7 +126,6 @@ _MATCH_KEYS = {
     "adapt_power": _number(0, 16),
     "block_weight": _number(0, 1.0),
     "block_span": _number(1, 100, integer=True),
-    "reference_gap_warning": _number(0.5, 5.0),
 }
 _APP_KEYS = {
     "work_size": _number(32, 2048, integer=True),
