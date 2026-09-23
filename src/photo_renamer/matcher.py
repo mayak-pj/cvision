@@ -66,6 +66,10 @@ class MatchConfig:
     # Строгий режим: у категорий ровно столько мест, сколько фото в эталоне, лишних мест нет.
     # "auto" — включается, когда число фото в папке совпадает с эталоном; True/False — принудительно.
     strict_counts: object = "auto"
+    # Предлагать имя каждому фото, даже когда уверенности мало: по опыту заказчика такое имя
+    # чаще верное, чем нет, а лишнее проще пометить в предпросмотре, чем вписывать вручную.
+    # Сомнительные фото получают состояние «ПРОВЕРЬТЕ».
+    always_propose: bool = True
     max_distance: float = 0.40          # дальше этого расстояния фото не относится ни к одной категории
     extra_penalty: float = 0.05         # штраф за экземпляр сверх количества в эталоне
     temperature: float = 0.05           # «резкость» % уверенности
@@ -463,8 +467,9 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
     # max_distance — строгая граница: дальше неё категория запрещена. «Неопознано» стоит
     # max_distance + штраф, поэтому фото в пределах границы всегда получает категорию,
     # хотя бы как лишний экземпляр. Штраф влияет только на выбор между категориями.
-    limit = np.inf if strict else config.max_distance
-    unmatched = 1e5 if strict else (config.max_distance + config.extra_penalty)
+    name_everything = strict or config.always_propose
+    limit = np.inf if name_everything else config.max_distance
+    unmatched = 1e5 if name_everything else (config.max_distance + config.extra_penalty)
 
     base_slots = int(base_cap.sum())
 
@@ -515,8 +520,8 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
             continue
         photo.confidence = float(conf[c])
         photo.distance = float(raw_dist[r, c])
-        if strict:
-            # состав совпадает с эталоном: имя предлагается всегда, сомнительные видны в предпросмотре
+        if name_everything:
+            # имя предлагается всегда, сомнительные видны в предпросмотре как «ПРОВЕРЬТЕ»
             photo.status = STATUS_OK if photo.confidence >= config.min_confidence else STATUS_CHECK
             photo.category = model.categories[c]
             if photo.status == STATUS_CHECK:
@@ -737,14 +742,22 @@ def _merge_side_blocks(instances: List[List[List[Tuple[int, int]]]]) -> List[Lis
         sides = [{side for _, side in group} for group in joined]
         for b in range(a + 1, len(instances)):
             other = instances[b]
-            if b in taken or len(other) != len(joined) or len(joined) < 2:
+            if b in taken or len(joined) < 2 or len(other) < 2:
+                continue
+            pairs = min(len(joined), len(other))
+            # изделий может оказаться не поровну: одного корпуса не сняли, лишний кадр попал
+            # в блок. Тогда склеиваем по порядку, сколько совпало, — «первый корпус к первой
+            # плате». Если блоки расходятся больше чем вдвое, это разные детали, а не ракурсы.
+            if pairs * 2 < max(len(joined), len(other)):
                 continue
             other_sides = [{side for _, side in group} for group in other]
-            if any(sides[k] & other_sides[k] for k in range(len(joined))):
+            if any(sides[k] & other_sides[k] for k in range(pairs)):
                 continue
-            for k, group in enumerate(other):
-                joined[k].extend(group)
+            for k in range(pairs):
+                joined[k].extend(other[k])
                 sides[k] |= other_sides[k]
+            joined.extend(list(group) for group in other[pairs:])
+            sides.extend({side for _, side in group} for group in other[pairs:])
             taken.add(b)
         merged.append(joined)
 

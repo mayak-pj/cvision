@@ -60,8 +60,9 @@ class FakeModel(ReferenceModel):
 
 
 def run(rows, names=None, side_rows=None, config=None, unreadable=(), ref_names=REF):
-    # по умолчанию проверяем обычный режим: строгий (состав как в эталоне) — отдельными тестами
-    config = config or MatchConfig(strict_counts=False)
+    """По умолчанию — обычный режим (строгий проверяется отдельно) и без «имя каждому фото»:
+    большинство тестов проверяют именно раскладку, а не поведение при низкой уверенности."""
+    config = config or MatchConfig(strict_counts=False, always_propose=False)
     names = names or ["DSC_%04d.JPG" % (i + 1) for i in range(len(rows))]
     model = FakeModel(rows, side_rows, ref_names)
     feats = [None if i in unreadable else i for i in range(len(rows))]
@@ -149,7 +150,7 @@ def test_ambiguous_photo_is_low_confidence_with_candidates():
 
 def test_confidence_threshold_is_configurable():
     rows = [{"Кабель DP": 0.10, "Кабель DP-miniDP": 0.10}]
-    assert run(rows, config=MatchConfig(min_confidence=40)).photos[0].status == STATUS_OK
+    assert run(rows, config=MatchConfig(always_propose=False, min_confidence=40)).photos[0].status == STATUS_OK
 
 
 def test_sequence_prior_rescues_weak_side():
@@ -163,7 +164,7 @@ def test_sequence_prior_rescues_weak_side():
 def test_side_rule_completes_pair():
     # без учёта соседей: вторая сторона дальше max_distance 0.40, но ближе side_fill 0.50
     rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.45}, {"Кулер": 0.08}]
-    result = run(rows, config=MatchConfig(strict_counts=False, sequence_weight=0))
+    result = run(rows, config=MatchConfig(always_propose=False, strict_counts=False, sequence_weight=0))
     assert result.photos[1].status == STATUS_SIDE_RULE
     assert new_names(result) == [
         "Оперативная память 1 фото 1.JPG",
@@ -175,7 +176,7 @@ def test_side_rule_completes_pair():
 
 def test_side_rule_does_not_take_dissimilar_or_identified_neighbors():
     rows = [{"Оперативная память": 0.10}, {"Кулер": 0.08}, {"Процессор": 0.10}, {}]
-    result = run(rows, config=MatchConfig(strict_counts=False, sequence_weight=0))
+    result = run(rows, config=MatchConfig(always_propose=False, strict_counts=False, sequence_weight=0))
     assert result.photos[1].category.name == "Кулер"
     assert result.photos[3].status == STATUS_NO_MATCH  # FAR > side_fill_max_distance
     assert any("Неполный комплект сторон: Оперативная память 1" in w for w in result.warnings)
@@ -386,7 +387,7 @@ def test_existing_names_untouched_without_new_photos_of_that_category():
 def test_renumbering_can_be_switched_off():
     names = ["DSC_0001.JPG", "DSC_0002.JPG", "Оперативная память 1 фото 1.JPG", "Оперативная память 1 фото 2.JPG"]
     rows = [{"Оперативная память": 0.10}, {"Оперативная память": 0.11}, {}, {}]
-    result = run(rows, names=names, config=MatchConfig(strict_counts=False, renumber_existing=False))
+    result = run(rows, names=names, config=MatchConfig(always_propose=False, strict_counts=False, renumber_existing=False))
     assert new_names(result)[:2] == ["Оперативная память 2 фото 1.JPG", "Оперативная память 2 фото 2.JPG"]
     assert new_names(result)[2:] == [None, None]
 

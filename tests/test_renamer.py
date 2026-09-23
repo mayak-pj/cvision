@@ -257,7 +257,7 @@ def test_plan_notes_and_kept_candidates(tmp_path):
     from photo_renamer.matcher import MatchConfig
 
     match = run_match([{"Оперативная память": 0.10}, {"Оперативная память": 0.45}, {}], names=names,
-                      config=MatchConfig(strict_counts=False, sequence_weight=0))
+                      config=MatchConfig(always_propose=False, strict_counts=False, sequence_weight=0))
     match.folder = str(folder)
     plan = build_plan(match)
     assert "по правилу сторон" in plan.items[1].note

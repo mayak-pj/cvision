@@ -63,7 +63,7 @@ def test_check_section_in_strict_mode():
         {"Кабель DP": 0.30, "Кабель DP-miniDP": 0.30},
         {"Кабель DP": 0.30, "Кабель DP-miniDP": 0.30},
     ]
-    match = run_match(rows, config=MatchConfig(strict_counts=True, min_confidence=90))
+    match = run_match(rows, config=MatchConfig(always_propose=False, strict_counts=True, min_confidence=90))
     report = build_report(match)
     assert report.to_check and report.identified == 10
     text = format_report(report)

@@ -29,6 +29,9 @@ def config(tmp_path):
     c = cfg.AppConfig()
     c.logs_dir = str(tmp_path / "logs")
     c.cache_dir = str(tmp_path / "cache")
+    # тесты этого файла проверяют переименование и откат, поэтому режим «имя каждому фото»
+    # выключен: иначе посторонние снимки тоже получают имена (это проверяется отдельным тестом)
+    c.match.always_propose = False
     return c
 
 
@@ -81,3 +84,12 @@ def test_apply_asks_confirmation(project, config, monkeypatch):
 def test_main_help_and_arguments(capsys):
     cli.main([])
     assert "--reference" in capsys.readouterr().out
+
+
+def test_every_photo_gets_a_name_when_asked(project, config):
+    """Режим «имя каждому фото»: посторонний снимок тоже получает предложение, но помечен «проверьте»."""
+    config.match.always_propose = True
+    cli.run_batch(str(project / "Эталон"), [str(project)], config, apply=True, assume_yes=True,
+                  out=lambda *_: None)
+    after = listing(project)
+    assert os.path.join("Партия 2", "SN002", "DSC_0003.JPG") not in after   # имя предложено и применено

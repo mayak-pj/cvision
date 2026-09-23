@@ -52,7 +52,7 @@ def make_target(folder, shots):
 def test_complete_folder(model, tmp_path):
     shots = [(7, 0), (5, 0), (6, 0), (1, 0), (2, 0), (8, 0), (5, 0), (6, 0), (3, 0), (4, 0), (9, 0), (10, 0)]
     names = make_target(tmp_path / "SN001", shots)
-    result = match_folder(model, str(tmp_path / "SN001"), names, MatchConfig(strict_counts=False))
+    result = match_folder(model, str(tmp_path / "SN001"), names, MatchConfig(always_propose=False, strict_counts=False))
     assert [p.new_name for p in result.photos] == [
         "Кулер.JPG",
         "Оперативная память 1 фото 1.JPG",
@@ -75,7 +75,7 @@ def test_folder_with_duplicate_missing_and_foreign(model, tmp_path):
     # кулер снят дважды, HDMI нет, есть посторонний снимок
     shots = [(7, 0), (7, 0), (1, 0), (2, 0), (None, 0), (3, 0), (4, 0), (9, 0), (10, 0)]
     names = make_target(tmp_path / "SN002", shots)
-    result = match_folder(model, str(tmp_path / "SN002"), names, MatchConfig(strict_counts=False))
+    result = match_folder(model, str(tmp_path / "SN002"), names, MatchConfig(always_propose=False, strict_counts=False))
     got = [p.new_name for p in result.photos]
     # дубль кулера: либо «Кулер 2», либо не переименован, но «Кулер» — первый кандидат
     assert got[1] == "Кулер 2.JPG" or (got[1] is None and result.photos[1].candidates[0].category == "Кулер")
@@ -101,7 +101,7 @@ def test_never_wrong_name_under_heavy_duplication(model, tmp_path):
     shots = [(s, 0) for s in seeds] * 25  # 100 фото
     names = make_target(tmp_path / "SN003", shots)
     progress = []
-    result = match_folder(model, str(tmp_path / "SN003"), names, MatchConfig(strict_counts=False),
+    result = match_folder(model, str(tmp_path / "SN003"), names, MatchConfig(always_propose=False, strict_counts=False),
                           on_progress=lambda d, t: progress.append(d))
     assert progress[-1] == 100
     identified = [p for p in result.photos if p.identified]

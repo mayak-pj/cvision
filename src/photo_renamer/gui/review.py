@@ -131,9 +131,12 @@ class BatchWindow(tk.Toplevel):
         self.tree.tag_configure("manual", foreground=palette["accent"])
         self.tree.tag_configure("skip", foreground=palette["muted"])
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._on_row_select())
-        for number in range(1, 4):  # 1, 2, 3 — выбрать кандидата с этим номером
+        # 1 и 2 — выбрать кандидата, 3 — не переименовывать: пометка «не переименовывать» нужна
+        # чаще третьего кандидата, а под рукой должны быть три соседние клавиши
+        for number in (1, 2):
             self.tree.bind("<Key-%d>" % number, lambda e, n=number: self.apply_candidate(n))
-        self.tree.bind("<Key-0>", lambda e: self.exclude_selected())
+        for key in ("<Key-3>", "<Key-0>"):
+            self.tree.bind(key, lambda e: self.exclude_selected())
         for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):  # Ctrl+колесо — размер фото
             self.tree.bind(sequence, self._on_wheel)
         for key in ("<Delete>", "<BackSpace>"):
@@ -155,8 +158,10 @@ class BatchWindow(tk.Toplevel):
         self.neighbours_frame.pack(fill="x", pady=(4, 0))
 
         ttk.Label(side, foreground="#555555", wraplength=300, justify="left",
-                  text="Клавиши в таблице: 1, 2, 3 — выбрать кандидата, 0 — не переименовывать. "
-                       "Ctrl+колесо — размер фото.").pack(anchor="w", pady=(6, 6))
+                  text="Клавиши в таблице: 1 и 2 — выбрать кандидата, 3 — не переименовывать. "
+                       "Ctrl+колесо — размер фото.\n"
+                       "Кнопка «Переименовать папку» переименует все фото, кроме помеченных "
+                       "«не переименовывать».").pack(anchor="w", pady=(6, 6))
         self.only_doubtful = tk.BooleanVar(value=False)
         ttk.Checkbutton(side, text="Показать только требующие проверки", variable=self.only_doubtful,
                         command=self.render_rows).pack(anchor="w")
@@ -450,10 +455,16 @@ class BatchWindow(tk.Toplevel):
             ttk.Label(self.candidates_frame, text="Кандидатов нет").pack(anchor="w")
         else:
             ttk.Label(self.candidates_frame, text="Похоже на:").pack(anchor="w")
-            for number, candidate in enumerate(photo.candidates, start=1):
+            for number, candidate in enumerate(photo.candidates[:2], start=1):   # 3 занята под отказ
                 text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
                 ttk.Button(self.candidates_frame, text=text,
                            command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
+            for candidate in photo.candidates[2:]:
+                text = "      %s — %.0f%%" % (candidate.category, candidate.confidence)
+                ttk.Button(self.candidates_frame, text=text,
+                           command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
+        ttk.Button(self.candidates_frame, text="3 — не переименовывать",
+                   command=self.exclude_selected).pack(fill="x", pady=(4, 1))
         self._show_preview(photo.index)
 
     def _refresh_categories(self) -> None:
@@ -497,13 +508,16 @@ class BatchWindow(tk.Toplevel):
             messagebox.showinfo(TITLE, "Переименовывать нечего.", parent=self)
             self.next_folder()
             return
-        unresolved = len(self.match.unidentified())
+        # фото, помеченные «не переименовывать», и нечитаемые файлы — это осознанный выбор,
+        # спрашивать про них незачем; предупреждаем только о тех, что программа не разобрала
+        unresolved = len([p for p in self.match.unidentified()
+                          if p.status not in (matcher.STATUS_EXCLUDED, matcher.STATUS_UNREADABLE)])
         if unresolved:
             question = ("Не опознано фото: %d. Их имена останутся прежними, а у остальных номера\n"
                         "будут идти по порядку съёмки без учёта пропущенных — потом будет сложно\n"
                         "понять, какой ракурс к какой детали.\n\n"
                         "Лучше разобрать их сейчас: включите «Показать только требующие проверки»\n"
-                        "и назначьте категории клавишами 1, 2, 3 или 0.\n\n"
+                        "и назначьте категории клавишами 1 и 2.\n\n"
                         "Всё равно переименовать %d файл(ов)?") % (unresolved, len(plan.pending))
             if not messagebox.askyesno(TITLE, question, parent=self):
                 return

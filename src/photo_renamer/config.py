@@ -111,6 +111,7 @@ def _check_str_list(value):
 # ключ → (где хранится, проверка)
 _MATCH_KEYS = {
     "min_confidence": _number(0, 100),
+    "always_propose": lambda v: None if isinstance(v, bool) else "ожидается true или false",
     "max_distance": _number(0.01, 1.0),
     "extra_penalty": _number(0, 1.0),
     "temperature": _number(0.001, 1.0),

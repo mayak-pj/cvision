@@ -263,18 +263,22 @@ def test_preview_is_empty_without_single_selection(batch):
     assert win.preview_caption.cget("text") == ""
 
 
-def test_warning_before_renaming_with_unresolved_photos(batch, monkeypatch):
+def test_marked_photos_are_kept_and_the_rest_are_renamed(batch, monkeypatch):
+    """«Не переименовывать» — осознанный выбор: спрашивать про такие фото не нужно,
+    а остальные переименовываются, даже если программа в них не уверена."""
     win, root_dir = batch
     from photo_renamer import matcher
 
-    matcher.set_category(win.match, 0, None)      # два фото оставлены без имени
+    kept = [win.match.photos[0].filename, win.match.photos[1].filename]
+    matcher.set_category(win.match, 0, None)
     matcher.set_category(win.match, 1, None)
     win.render_rows()
-    assert len(win.match.unidentified()) >= 2
 
     questions = []
     monkeypatch.setattr(review_mod.messagebox, "askyesno",
-                        lambda title, text, **k: questions.append(text) or False)
+                        lambda title, text, **k: questions.append(text) or True)
     win.apply_folder()
-    assert questions and "Не опознано фото" in questions[0]
-    assert sorted(os.listdir(str(root_dir / "SN2")))[0].startswith("IMG_")   # отменили — ничего не менялось
+    assert questions and "Не опознано фото" not in questions[0]
+    after = set(os.listdir(str(root_dir / "SN2")))
+    assert set(kept) <= after                       # помеченные остались с прежними именами
+    assert any(not name.startswith("IMG_") for name in after)   # остальные переименованы
