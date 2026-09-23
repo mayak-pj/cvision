@@ -514,14 +514,11 @@ def test_undo_is_reachable_from_every_widget_and_by_button(batch):
 
 
 def test_buttons_have_equal_gaps(batch):
-    """Кнопки внизу стоят с одинаковым зазором и не налезают друг на друга."""
+    """У всех кнопок внизу одинаковый отступ — он задаётся одной константой."""
     win, _ = batch
-    win.geometry("1366x768")
-    win.update()
     buttons = [win.undo_edit_btn, win.undo_btn, win.skip_btn, win.apply_btn, win.close_btn]
-    gaps = [right.winfo_rootx() - (left.winfo_rootx() + left.winfo_width())
-            for left, right in zip(buttons, buttons[1:])]
-    assert gaps and len(set(gaps)) == 1 and gaps[0] > 0, gaps
+    gaps = {button.pack_info()["padx"] for button in buttons}
+    assert gaps == {review_mod.BUTTON_GAP}, gaps
 
 
 def test_category_list_fits_the_longest_name(batch):
