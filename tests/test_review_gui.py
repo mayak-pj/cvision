@@ -514,3 +514,37 @@ def test_undo_is_reachable_from_every_widget_and_by_button(batch):
     assert row_of(win, filename) != before
     win.undo_edit_btn.invoke()                      # нажатие кнопки, а не клавиш
     assert row_of(win, filename) == before
+
+
+def test_buttons_have_equal_gaps(batch):
+    """Кнопки внизу стоят с одинаковым зазором и не налезают друг на друга."""
+    win, _ = batch
+    win.geometry("1366x768")
+    win.update()
+    buttons = [win.undo_edit_btn, win.undo_btn, win.skip_btn, win.apply_btn, win.close_btn]
+    gaps = [right.winfo_rootx() - (left.winfo_rootx() + left.winfo_width())
+            for left, right in zip(buttons, buttons[1:])]
+    assert gaps and len(set(gaps)) == 1 and gaps[0] > 0, gaps
+
+
+def test_category_list_fits_the_longest_name(batch):
+    """Список категорий шире самого длинного названия: обрезанный список читать невозможно."""
+    import tkinter.font as tkfont
+
+    win, _ = batch
+    win.categories.append("Панель USB, VGA, кнопок и индикации")
+    win._refresh_categories()
+    win.update()
+    font = tkfont.Font(font=win.categories_list.cget("font"))
+    longest = max(win.categories_list.get(0, "end"), key=font.measure)
+    assert font.measure(longest) <= win.categories_list.winfo_width()
+
+
+def test_candidate_buttons_are_right_aligned(batch):
+    """Проценты в вариантах стоят друг под другом: текст кнопок прижат к правому краю."""
+    win, _ = batch
+    select_row(win, 0)
+    assert win.style.lookup("Candidate.TButton", "anchor") == "e"
+    for widget in win.candidates_frame.winfo_children():
+        if widget.winfo_class() == "TButton":
+            assert str(widget.cget("style")) == "Candidate.TButton"

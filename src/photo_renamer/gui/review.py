@@ -8,6 +8,7 @@
 
 import os
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, simpledialog, ttk
 from typing import Dict, List, Optional
 
@@ -25,6 +26,9 @@ TITLE = "Переименование папок"
 # «−» и «+». Значение запоминается в настройках. Верхняя граница — размер миниатюры в кэше:
 # крупнее пришлось бы заново читать исходные файлы (на сетевых дисках это долго).
 MIN_THUMB, MAX_THUMB, THUMB_STEP = 48, 320, 24
+BUTTON_GAP = 4            # одинаковый зазор между всеми кнопками окна
+SIDE_PADDING = 44         # полоса прокрутки, рамки и отступы правой колонки
+MIN_SIDE_WIDTH, MAX_SIDE_WIDTH = 260, 460
 STATUS_TEXT = {
     matcher.STATUS_OK: "распознано",
     matcher.STATUS_SIDE_RULE: "по правилу сторон",
@@ -86,30 +90,29 @@ class BatchWindow(tk.Toplevel):
         self.progress = ttk.Progressbar(top, length=260, mode="determinate")
         self.progress.pack(side="right")
         zoom = ttk.Frame(top)
-        zoom.pack(side="right", padx=(0, 12))
-        ttk.Label(zoom, text="Размер фото:").pack(side="left", padx=(0, 4))
+        zoom.pack(side="right", padx=(0, BUTTON_GAP * 2))
+        ttk.Label(zoom, text="Размер фото:").pack(side="left", padx=(0, BUTTON_GAP))
         ttk.Button(zoom, text="−", width=3,
                    command=lambda: self.set_thumb_size(self.thumb_size - THUMB_STEP)).pack(side="left")
         ttk.Button(zoom, text="+", width=3,
-                   command=lambda: self.set_thumb_size(self.thumb_size + THUMB_STEP)).pack(side="left", padx=(2, 0))
+                   command=lambda: self.set_thumb_size(self.thumb_size + THUMB_STEP)).pack(side="left", padx=BUTTON_GAP)
 
         # Нижняя строка (состояние папки и кнопки) занимает место раньше остальных частей окна:
         # pack раздаёт высоту в порядке упаковки, и на невысоком экране без этого исчезла бы именно она.
         bottom = ttk.Frame(self, padding=(10, 6, 10, 10))
         bottom.pack(side="bottom", fill="x")
         self.status_var = tk.StringVar(value="")
-        ttk.Label(bottom, textvariable=self.status_var, wraplength=700, justify="left").pack(
-            side="left", fill="x", expand=True)
+        # кнопки упаковываются первыми и справа налево: тогда каждая получает свою ширину
+        # и одинаковый зазор, а строка состояния занимает остаток и переносится по словам
         self.undo_edit_btn = ttk.Button(bottom, text="Отменить правку (Ctrl+Z)", command=self.undo_edit)
-        self.undo_edit_btn.pack(side="left", padx=4)
         self.undo_btn = ttk.Button(bottom, text="Отменить эту папку", command=self.undo_folder, state="disabled")
-        self.undo_btn.pack(side="left", padx=4)
         self.skip_btn = ttk.Button(bottom, text="Пропустить папку", command=self.skip_folder)
-        self.skip_btn.pack(side="left", padx=4)
         self.apply_btn = ttk.Button(bottom, text="Переименовать папку", command=self.apply_folder)
-        self.apply_btn.pack(side="left")
         self.close_btn = ttk.Button(bottom, text="Закрыть", command=self.close)
-        self.close_btn.pack(side="left", padx=(12, 0))
+        for button in (self.close_btn, self.apply_btn, self.skip_btn, self.undo_btn, self.undo_edit_btn):
+            button.pack(side="right", padx=BUTTON_GAP)
+        ttk.Label(bottom, textvariable=self.status_var, wraplength=520, justify="left").pack(
+            side="left", fill="x", expand=True)
 
         body = ttk.Frame(self, padding=(10, 0, 10, 0))
         body.pack(fill="both", expand=True)
@@ -117,6 +120,8 @@ class BatchWindow(tk.Toplevel):
         table = ttk.Frame(body)
         table.pack(side="left", fill="both", expand=True)
         self.style = ttk.Style(self)
+        # текст вариантов прижат к правому краю: проценты оказываются друг под другом
+        self.style.configure("Candidate.TButton", anchor="e")
         self.tree = ttk.Treeview(table, columns=("new", "confidence", "status"), selectmode="extended",
                                  style="Review.Treeview")
         # по заголовкам столбцов сортируют щелчком: первый щелчок — по возрастанию, второй — наоборот
@@ -126,9 +131,11 @@ class BatchWindow(tk.Toplevel):
         for column, title in self.COLUMN_TITLES:
             self.tree.heading(column, text=title, command=lambda c=column: self.sort_by(c))
         self._show_sort_marks()
-        self.tree.column("new", width=330)
-        self.tree.column("confidence", width=100, anchor="e", stretch=False)
-        self.tree.column("status", width=170, stretch=False)
+        # ширины столбцов заданы скромно: иначе таблица запрашивает больше места, чем есть,
+        # и сжимает правую колонку со списком категорий. Границы столбцов можно тянуть мышью
+        self.tree.column("new", width=280)
+        self.tree.column("confidence", width=90, anchor="e", stretch=False)
+        self.tree.column("status", width=150, stretch=False)
         self._apply_thumb_size()
         scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
@@ -156,11 +163,12 @@ class BatchWindow(tk.Toplevel):
         self._bind_undo(self.tree)
         self._bind_undo(self)
 
-        side = ttk.Frame(body, padding=(10, 0, 0, 0))
+        self.side = side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
+        side.pack_propagate(False)      # ширину задаём сами — по длине названий категорий
 
         self.candidates_frame = ttk.Frame(side)
-        self.candidates_frame.pack(fill="x", pady=(4, 8))
+        self.candidates_frame.pack(fill="x", pady=(0, BUTTON_GAP * 2))
         header = ttk.Frame(side)
         header.pack(fill="x")
         ttk.Label(header, text="Категория:").pack(side="left")
@@ -171,14 +179,16 @@ class BatchWindow(tk.Toplevel):
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self._refresh_categories())
         search_entry = ttk.Entry(side, textvariable=self.search_var)
-        search_entry.pack(fill="x", pady=(2, 4))
+        search_entry.pack(fill="x", pady=(BUTTON_GAP, BUTTON_GAP))
         buttons = ttk.Frame(side)
         buttons.pack(side="bottom", fill="x")      # кнопки не должны уезжать за край на низком экране
-        ttk.Button(buttons, text="Применить к выбранным", command=self.apply_selected_category).pack(fill="x", pady=2)
-        ttk.Button(buttons, text="Не переименовывать", command=self.exclude_selected).pack(fill="x", pady=2)
+        ttk.Button(buttons, text="Применить к выбранным",
+                   command=self.apply_selected_category).pack(fill="x", pady=(BUTTON_GAP, 0))
+        ttk.Button(buttons, text="Не переименовывать",
+                   command=self.exclude_selected).pack(fill="x", pady=(BUTTON_GAP, 0))
         list_frame = ttk.Frame(side)
         list_frame.pack(fill="both", expand=True)
-        self.categories_list = tk.Listbox(list_frame, exportselection=False, activestyle="none", height=6, width=34)
+        self.categories_list = tk.Listbox(list_frame, exportselection=False, activestyle="none", height=6)
         cat_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.categories_list.yview)
         self.categories_list.configure(yscrollcommand=cat_scroll.set)
         self.categories_list.pack(side="left", fill="both", expand=True)
@@ -327,7 +337,7 @@ class BatchWindow(tk.Toplevel):
 
     def _apply_thumb_size(self) -> None:
         self.style.configure("Review.Treeview", rowheight=self.thumb_size + 8)
-        self.tree.column("#0", width=self.thumb_size + 280)
+        self.tree.column("#0", width=self.thumb_size + 200)
 
     def set_thumb_size(self, size: int) -> None:
         """Размер фото в строках таблицы. Миниатюры перерисовываются из кэша, файлы не перечитываются."""
@@ -566,9 +576,11 @@ class BatchWindow(tk.Toplevel):
             for number, candidate in enumerate(alternatives[:2], start=1):   # 3 занята под отказ
                 text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
                 ttk.Button(self.candidates_frame, text=text,
-                           command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
-        ttk.Button(self.candidates_frame, text="3 — Не переименовывать",
-                   command=self.exclude_selected).pack(fill="x", pady=(4, 1))
+                           style="Candidate.TButton",
+                           command=lambda c=candidate.category: self.apply_category(c)).pack(
+                    fill="x", pady=(0, BUTTON_GAP))
+        ttk.Button(self.candidates_frame, text="3 — Не переименовывать", style="Candidate.TButton",
+                   command=self.exclude_selected).pack(fill="x", pady=(0, BUTTON_GAP))
 
     def _all_categories(self) -> List[str]:
         """Категории эталона плюс добавленные вручную (names.txt рядом с программой)."""
@@ -626,6 +638,21 @@ class BatchWindow(tk.Toplevel):
         self.categories_list.delete(0, "end")
         for name in names_mod.filter_names(self.search_var.get(), self.categories):
             self.categories_list.insert("end", name)
+        self._fit_side_panel()
+
+    def _fit_side_panel(self) -> None:
+        """Ширина правой колонки — по самому длинному названию категории.
+
+        Названия бывают длинными («Панель USB, VGA, кнопок и индикации»), и обрезанный
+        список читать невозможно. Ширина считается по шрифту списка, а не в «знаках»:
+        у пропорционального шрифта знаки разной ширины.
+        """
+        names = list(self.categories_list.get(0, "end")) or list(self.categories)
+        if not names:
+            return
+        font = tkfont.Font(font=self.categories_list.cget("font"))
+        needed = max(font.measure(name) for name in names) + SIDE_PADDING
+        self.side.configure(width=max(MIN_SIDE_WIDTH, min(needed, MAX_SIDE_WIDTH)))
 
     def apply_selected_category(self) -> None:
         selection = self.categories_list.curselection()
