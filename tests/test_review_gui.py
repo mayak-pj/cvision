@@ -151,12 +151,14 @@ def test_candidate_hotkeys(batch):
     photo = next(p for p in win.match.photos if p.filename == filename)
     second = win._alternatives(photo)[1].category      # варианты — без уже предложенной категории
 
+    following = win.tree.item(win.tree.get_children()[1], "text").strip()
     win.apply_candidate(2)                 # клавиша «2» — второй вариант
     assert row_of(win, filename)[0].startswith(second)
     assert row_of(win, filename)[2] == "выбрано вручную"
-    # выделение остаётся на том же фото: видно, что получилось, и можно выбрать другой вариант
+    # работа продолжается со следующего файла: переименованное фото уезжает по алфавиту,
+    # и держаться за него незачем
     assert win.tree.selection()
-    assert win.tree.item(win.tree.selection()[0], "text").strip() == filename
+    assert win.tree.item(win.tree.selection()[0], "text").strip() == following
 
 
 def test_hotkey_without_such_candidate_does_nothing(batch):

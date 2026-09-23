@@ -441,7 +441,7 @@ class BatchWindow(tk.Toplevel):
         indexes = self._selected_indexes()
         if not indexes:
             return "break"
-        following = self._next_photo()
+        following = self._following_photo()
         self._remember(indexes)
         confirmed = 0
         for index in indexes:
@@ -461,9 +461,13 @@ class BatchWindow(tk.Toplevel):
     def _selected_rows(self) -> List[str]:
         return [iid for iid in self.tree.selection() if iid in self._row_index]
 
-    def _next_photo(self) -> Optional[int]:
-        """Фото, стоящее в таблице сразу за выбранным (запоминается ДО перестроения таблицы:
-        после правки строка перестаёт быть сомнительной и уезжает вниз)."""
+    def _following_photo(self) -> Optional[int]:
+        """Фото, которое идёт в таблице сразу за выбранным (запоминается ДО правки).
+
+        После правки таблица перестраивается: переименованное фото уезжает на своё место
+        по алфавиту, а у соседей могут поменяться номера экземпляров. Поэтому запоминается
+        именно следующий файл, а не место в таблице — работа продолжается с него.
+        """
         rows = self.tree.get_children()
         current = self._selected_rows()
         if not rows or not current or current[-1] not in rows:
@@ -472,6 +476,7 @@ class BatchWindow(tk.Toplevel):
         return self._row_index[rows[position + 1]] if position + 1 < len(rows) else None
 
     def _select_photo(self, index: Optional[int]) -> None:
+        """Выделяет строку этого фото, где бы она после перестроения таблицы ни оказалась."""
         if index is None:
             return
         for iid, photo_index in self._row_index.items():
@@ -479,6 +484,7 @@ class BatchWindow(tk.Toplevel):
                 self.tree.selection_set(iid)
                 self.tree.focus(iid)
                 self.tree.see(iid)
+                self._on_row_select()        # панель вариантов — для нового выбранного фото
                 return
 
     def _settled_categories(self) -> Dict[str, int]:
@@ -519,6 +525,7 @@ class BatchWindow(tk.Toplevel):
         indexes = self._selected_indexes()
         if not indexes:
             return
+        following = self._following_photo()
         self._remember(indexes)
         applied = 0
         for index in indexes:
@@ -530,9 +537,7 @@ class BatchWindow(tk.Toplevel):
             self._undo.pop()                  # ничего не изменилось — и отменять нечего
             return
         self.render_rows()
-        # выделение остаётся на том же фото: имя видно сразу, и если оно неверное,
-        # можно выбрать другой вариант, не возвращаясь стрелкой вверх
-        self._select_photos(indexes)
+        self._select_photo(following)
 
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
@@ -627,11 +632,12 @@ class BatchWindow(tk.Toplevel):
         if category is not None:
             key = (matcher.add_category(self.match, category, self.names.sides_for(category))
                    if category not in self.reference_categories else category_key(category))
+        following = self._following_photo()
         self._remember(indexes)
         for index in indexes:
             matcher.set_category(self.match, index, key)
         self.render_rows()
-        self._select_photos(indexes)
+        self._select_photo(following)
 
     def exclude_selected(self) -> None:
         self.apply_category(None)
