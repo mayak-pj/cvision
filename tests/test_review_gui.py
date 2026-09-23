@@ -151,14 +151,13 @@ def test_candidate_hotkeys(batch):
     photo = next(p for p in win.match.photos if p.filename == filename)
     second = win._alternatives(photo)[1].category      # варианты — без уже предложенной категории
 
-    following = win.tree.item(win.tree.get_children()[1], "text").strip()
+    position = win._selected_position()
     win.apply_candidate(2)                 # клавиша «2» — второй вариант
     assert row_of(win, filename)[0].startswith(second)
     assert row_of(win, filename)[2] == "выбрано вручную"
-    # работа продолжается со следующего файла: переименованное фото уезжает по алфавиту,
-    # и держаться за него незачем
-    assert win.tree.selection()
-    assert win.tree.item(win.tree.selection()[0], "text").strip() == following
+    # выделение держится за МЕСТО: исправленное фото уезжает по алфавиту, а на его место
+    # встаёт следующий файл — обычно именно он получает освободившееся имя
+    assert win.tree.selection() and win.tree.selection()[0] == win.tree.get_children()[position]
 
 
 def test_hotkey_without_such_candidate_does_nothing(batch):
@@ -459,7 +458,8 @@ def test_enter_confirms_and_moves_down(batch):
 
     win.confirm_selected()
     assert row_of(win, filename)[2] == "выбрано вручную"
-    assert win.tree.item(win.tree.selection()[0], "text").strip() == rows_before[1]
+    # имя не изменилось, строка осталась на месте — выделение уходит на строку ниже
+    assert win.tree.selection()[0] == win.tree.get_children()[1]
 
 
 def test_ctrl_z_undoes_the_last_edit(batch):

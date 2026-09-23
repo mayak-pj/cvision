@@ -441,7 +441,7 @@ class BatchWindow(tk.Toplevel):
         indexes = self._selected_indexes()
         if not indexes:
             return "break"
-        following = self._following_photo()
+        position = self._selected_position()
         self._remember(indexes)
         confirmed = 0
         for index in indexes:
@@ -452,7 +452,8 @@ class BatchWindow(tk.Toplevel):
         if not confirmed:
             self._undo.pop()                  # подтверждать было нечего — шага не было
         self.render_rows()
-        self._select_photo(following)
+        # имя не меняется, значит строка осталась на своём месте: идём на строку ниже
+        self._select_position(None if position is None else position + 1)
         return "break"
 
     def _selected_indexes(self) -> List[int]:
@@ -461,19 +462,29 @@ class BatchWindow(tk.Toplevel):
     def _selected_rows(self) -> List[str]:
         return [iid for iid in self.tree.selection() if iid in self._row_index]
 
-    def _following_photo(self) -> Optional[int]:
-        """Фото, которое идёт в таблице сразу за выбранным (запоминается ДО правки).
-
-        После правки таблица перестраивается: переименованное фото уезжает на своё место
-        по алфавиту, а у соседей могут поменяться номера экземпляров. Поэтому запоминается
-        именно следующий файл, а не место в таблице — работа продолжается с него.
-        """
+    def _selected_position(self) -> Optional[int]:
+        """Место выбранной строки в таблице — не фото, а именно место."""
         rows = self.tree.get_children()
         current = self._selected_rows()
         if not rows or not current or current[-1] not in rows:
             return None
-        position = rows.index(current[-1])
-        return self._row_index[rows[position + 1]] if position + 1 < len(rows) else None
+        return rows.index(current[-1])
+
+    def _select_position(self, position: Optional[int]) -> None:
+        """Выделяет строку, которая стоит на этом месте после перестроения таблицы.
+
+        Исправленное фото уезжает на своё место по алфавиту, а на освободившееся встаёт
+        следующий файл — и его как раз надо проверить: имя, которое было у исправленного,
+        программа обычно передаёт ему. Поэтому выделение держится за место, а не за фото.
+        """
+        rows = self.tree.get_children()
+        if position is None or not rows:
+            return
+        iid = rows[min(position, len(rows) - 1)]
+        self.tree.selection_set(iid)
+        self.tree.focus(iid)
+        self.tree.see(iid)
+        self._on_row_select()
 
     def _select_photo(self, index: Optional[int]) -> None:
         """Выделяет строку этого фото, где бы она после перестроения таблицы ни оказалась."""
@@ -525,7 +536,7 @@ class BatchWindow(tk.Toplevel):
         indexes = self._selected_indexes()
         if not indexes:
             return
-        following = self._following_photo()
+        position = self._selected_position()
         self._remember(indexes)
         applied = 0
         for index in indexes:
@@ -537,7 +548,7 @@ class BatchWindow(tk.Toplevel):
             self._undo.pop()                  # ничего не изменилось — и отменять нечего
             return
         self.render_rows()
-        self._select_photo(following)
+        self._select_position(position)
 
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
@@ -632,12 +643,12 @@ class BatchWindow(tk.Toplevel):
         if category is not None:
             key = (matcher.add_category(self.match, category, self.names.sides_for(category))
                    if category not in self.reference_categories else category_key(category))
-        following = self._following_photo()
+        position = self._selected_position()
         self._remember(indexes)
         for index in indexes:
             matcher.set_category(self.match, index, key)
         self.render_rows()
-        self._select_photo(following)
+        self._select_position(position)
 
     def exclude_selected(self) -> None:
         self.apply_category(None)
