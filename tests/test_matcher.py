@@ -467,3 +467,32 @@ def test_missing_side_does_not_shift_the_following_items():
         (3, 3), (3, 1), (3, 2),
     ]
     assert any("Съемный накопитель 2 — 2 фото из 3" in w for w in result.warnings)
+
+
+def test_sides_shot_in_separate_blocks_are_joined():
+    """Фотограф снял сначала обе стороны платы у всех изделий, а корпуса — отдельным блоком.
+
+    Случай заказчика: 22 фото плат подряд (11 изделий), потом другие детали, потом 11 корпусов.
+    Первый корпус относится к первому изделию, второй ко второму и так далее.
+    """
+    order = [1, 2] * 3 + [0] + [3] * 3          # 0 — посторонний снимок между блоками
+    rows, side_rows = _sides_by_look([s if s else 1 for s in order])
+    for k, side in enumerate(order):
+        if side == 0:                            # это фото не относится к категории
+            rows[k] = {}
+            side_rows = {key: value for key, value in side_rows.items() if key[0] != k}
+    result = run(rows, side_rows=side_rows, ref_names=THREE_SIDES)
+    assert [(p.instance, p.side) for p in result.photos] == [
+        (1, 1), (1, 2), (2, 1), (2, 2), (3, 1), (3, 2),
+        (None, None),
+        (1, 3), (2, 3), (3, 3),
+    ]
+    assert result.warnings == []
+
+
+def test_separate_blocks_with_same_sides_are_different_items():
+    """Два блока с одинаковыми сторонами — это разные детали, склеивать их нельзя."""
+    rows, side_rows = _sides_by_look([1, 2, 1, 2])
+    rows[2] = {"Съемный накопитель": 0.10}
+    result = run(rows, side_rows=side_rows, ref_names=THREE_SIDES)
+    assert [(p.instance, p.side) for p in result.photos] == [(1, 1), (1, 2), (2, 1), (2, 2)]

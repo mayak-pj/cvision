@@ -75,7 +75,7 @@ class MatchConfig:
     side_fill_top_k: int = 2            # ...и только если категория среди стольких первых кандидатов фото
     # Во сколько обходится пропущенная сторона детали при делении серии на экземпляры.
     # Меньше — программа охотнее признаёт, что какой-то стороны просто нет фото.
-    side_skip_penalty: float = 0.20
+    side_skip_penalty: float = 0.10
 
     # Правило серий: одну и ту же деталь снимают подряд, поэтому окрестность кадра подсказывает
     # его категорию. Во втором проходе раскладки категория, за которую соседние кадры почти не
@@ -667,7 +667,22 @@ def _side_costs(result: FolderMatch, cat: Category, idx: List[int]) -> np.ndarra
     return costs - costs.min(axis=1, keepdims=True)
 
 
-def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[Tuple[int, int]]]:
+def _present_sides(result: FolderMatch, cat: Category, idx: List[int]) -> int:
+    """Маска сторон, которые в этом блоке вообще встречаются (по лучшему совпадению каждого фото).
+
+    Ничья считается за присутствие: если расстояния до сторон одинаковы, подсказки нет
+    и присутствуют все стороны.
+    """
+    costs = _side_costs(result, cat, idx)
+    present = 0
+    for side in range(cat.sides):
+        if costs.size and bool(np.any(costs[:, side] <= 1e-9)):
+            present |= 1 << side
+    return present or (1 << cat.sides) - 1
+
+
+def _split_run(result: FolderMatch, cat: Category, idx: List[int],
+               shot_here: Optional[int] = None) -> List[List[Tuple[int, int]]]:
     """Делит серию на экземпляры и назначает каждому фото сторону: [[(фото, сторона), ...], ...].
 
     Стороны детали различаются на вид (у съёмного накопителя это две стороны платы и корпус),
@@ -693,7 +708,10 @@ def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[
     costs = _side_costs(result, cat, idx)
     penalty = result.config.side_skip_penalty
     states = 1 << sides
-    missing = np.array([sides - bin(mask).count("1") for mask in range(states)], dtype=float)
+    # shot_here — стороны, которые в этом блоке снимали. Остальные сняты отдельным блоком
+    # (фотограф снял сначала все платы, а корпуса потом), и за их отсутствие платить не надо.
+    expected = (1 << sides) - 1 if shot_here is None else shot_here
+    missing = np.array([bin(expected & ~mask).count("1") for mask in range(states)], dtype=float)
 
     best = np.full(states, np.inf)
     for side in range(sides):        # серия может начаться с любой стороны: что было раньше, неизвестно
@@ -736,6 +754,47 @@ def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[
     return groups
 
 
+def _merge_side_blocks(instances: List[List[List[Tuple[int, int]]]]) -> List[List[Tuple[int, int]]]:
+    """Склеивает блоки, снятые «по ракурсам»: сперва все платы, потом все корпуса.
+
+    Бывает, что фотограф снимает не деталь за деталью, а ракурс за ракурсом: сначала по две
+    стороны платы у всех накопителей подряд, потом отдельным блоком — все корпуса. Тогда
+    в папке получается два блока одной категории: в первом у каждого изделия стороны 1 и 2,
+    во втором — сторона 3, и порядок изделий в блоках один и тот же.
+
+    Такие блоки узнаются по признакам: изделий поровну и стороны не пересекаются. Тогда i-е
+    изделие первого блока и i-е изделие второго — одна и та же деталь. Если стороны
+    пересекаются (например, два блока по двум сторонам), это разные детали, и склейки нет.
+
+    instances — списки изделий по блокам, в порядке съёмки.
+    """
+    merged: List[List[List[Tuple[int, int]]]] = []
+    taken = set()
+    for a, block in enumerate(instances):
+        if a in taken:
+            continue
+        joined = [list(group) for group in block]
+        sides = [{side for _, side in group} for group in joined]
+        for b in range(a + 1, len(instances)):
+            other = instances[b]
+            if b in taken or len(other) != len(joined) or len(joined) < 2:
+                continue
+            other_sides = [{side for _, side in group} for group in other]
+            if any(sides[k] & other_sides[k] for k in range(len(joined))):
+                continue
+            for k, group in enumerate(other):
+                joined[k].extend(group)
+                sides[k] |= other_sides[k]
+            taken.add(b)
+        merged.append(joined)
+
+    out = [group for block in merged for group in block]
+    for group in out:
+        group.sort(key=lambda pair: pair[0])
+    out.sort(key=lambda group: group[0][0])          # нумерация — по первому фото изделия
+    return out
+
+
 def renumber(result: FolderMatch) -> None:
     """Пересчитывает экземпляры, стороны и новые имена. Вызывается и после ручной правки категорий."""
     photos = result.photos
@@ -755,8 +814,27 @@ def renumber(result: FolderMatch) -> None:
 
     result.warnings = [w for w in result.warnings if not w.startswith("Неполный комплект")]
     next_free: Dict[str, int] = {}
+    runs: Dict[str, Tuple[Category, List[List[int]]]] = {}
     for cat, idx in _runs(photos, include_named):
-        for group in _split_run(result, cat, idx):
+        runs.setdefault(cat.key, (cat, []))[1].append(idx)
+
+    blocks: Dict[str, Tuple[Category, List[List[List[Tuple[int, int]]]]]] = {}
+    for key, (cat, idx_list) in runs.items():
+        present = [_present_sides(result, cat, idx) for idx in idx_list]
+        groups = []
+        for k, idx in enumerate(idx_list):
+            elsewhere = 0
+            for j, mask in enumerate(present):
+                if j != k:
+                    elsewhere |= mask
+            # стороны, которых здесь нет, но которые сняты в другом блоке этой же категории,
+            # с этого блока не спрашиваются
+            shot_here = present[k] | (((1 << cat.sides) - 1) & ~elsewhere)
+            groups.append(_split_run(result, cat, idx, shot_here))
+        blocks[key] = (cat, groups)
+
+    for cat, per_block in blocks.values():
+        for group in _merge_side_blocks(per_block):
             instance = next_free.get(cat.key, 1)
             while instance in used.get(cat.key, set()):
                 instance += 1
