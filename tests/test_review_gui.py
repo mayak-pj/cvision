@@ -370,3 +370,37 @@ def test_alternatives_are_full_list_when_photo_is_not_named(batch):
     matcher.set_category(win.match, 0, None)            # «не переименовывать»
     photo = win.match.photos[0]
     assert len(win._alternatives(photo)) == len(photo.candidates)
+
+
+def test_exhausted_category_is_not_offered(batch):
+    """Категория, которой в эталоне столько же, сколько вы уже отметили, в вариантах не нужна.
+
+    Случай заказчика: два кабеля питания отмечены вручную, третьего в папке быть не может.
+    """
+    win, _ = batch
+    from photo_renamer import matcher
+
+    win.match.strict = True                       # состав папки совпадает с эталоном
+    full = win.reference_categories[0]            # категория с одним фото в эталоне
+    other = next(p for p in win.match.photos if not p.identified or p.category.name != full)
+    matcher.set_category(win.match, win.match.photos[0].index, category_key_of(full))
+    assert full in win._exhausted_categories()
+    assert all(c.category != full for c in win._alternatives(other))
+
+    win.match.strict = False                      # состав не совпадает — ограничение снимается
+    assert win._exhausted_categories() == set()
+
+
+def category_key_of(name):
+    from photo_renamer.reference import category_key
+
+    return category_key(name)
+
+
+def test_exhausted_rule_ignores_guesses(batch):
+    """Догадки программы категорию не закрывают: иначе ошибка отняла бы возможность её выбрать."""
+    win, _ = batch
+    win.match.strict = True
+    guessed = [p.category.name for p in win.match.photos if p.identified and p.status != "manual"]
+    assert win._exhausted_categories() == set() or all(name not in win._exhausted_categories()
+                                                       for name in guessed)

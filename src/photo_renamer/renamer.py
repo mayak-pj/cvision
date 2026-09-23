@@ -87,7 +87,8 @@ def build_plan(match: FolderMatch) -> RenamePlan:
             category = p.category.name if p.identified else ""
             reason = p.note or p.status
             if not p.identified and p.candidates:
-                reason += "; кандидаты: " + ", ".join("%s %.0f%%" % (c.category, c.confidence) for c in p.candidates)
+                reason += "; кандидаты: " + ", ".join("%s %.0f%%" % (c.category, c.confidence)
+                                                      for c in p.candidates[:3])
             plan.kept.append((p.filename, category, p.confidence, reason))
     check_plan(plan)
     return plan

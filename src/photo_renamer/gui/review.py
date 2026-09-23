@@ -408,15 +408,38 @@ class BatchWindow(tk.Toplevel):
                 self.tree.see(iid)
                 return
 
-    @staticmethod
-    def _alternatives(photo) -> List:
-        """Другие подходящие категории — без той, что уже стоит в столбце «Новое имя».
+    def _settled_categories(self) -> Dict[str, int]:
+        """Сколько фото каждой категории вы уже подтвердили: задали вручную или они уже названы."""
+        settled: Dict[str, int] = {}
+        for photo in self.match.photos:
+            if photo.identified and photo.status in (matcher.STATUS_MANUAL, matcher.STATUS_ALREADY_NAMED):
+                settled[photo.category.name] = settled.get(photo.category.name, 0) + 1
+        return settled
 
-        Предлагать в списке то же самое, что программа и так выбрала, незачем: если имя верное,
-        его просто оставляют, а если нет — нужны именно другие варианты.
+    def _exhausted_categories(self) -> set:
+        """Категории, которых в папке больше быть не может: состав совпадает с эталоном,
+        а вы уже подтвердили столько фото, сколько их в эталоне.
+
+        Считаются только подтверждённые вами фото, а не догадки программы: иначе неверная
+        догадка закрывала бы категорию, и выбрать её стало бы негде.
+        """
+        if self.match is None or not self.match.strict:
+            return set()
+        capacity = {c.name: len(c.photos) for c in self.model.categories}
+        settled = self._settled_categories()
+        return {name for name, count in settled.items() if count >= capacity.get(name, 0) > 0}
+
+    def _alternatives(self, photo) -> List:
+        """Другие подходящие категории — без той, что уже в столбце «Новое имя», и без тех,
+        что по составу эталона уже закрыты вашими же пометками.
+
+        Предлагать то же самое, что программа и так выбрала, незачем: если имя верное, его
+        просто оставляют. А категория, которой в папке ровно столько же, сколько вы уже
+        отметили, третий раз встретиться не может — место в списке она занимает зря.
         """
         current = photo.category.name if photo.identified else None
-        return [c for c in photo.candidates if c.category != current]
+        exhausted = self._exhausted_categories() - {current}
+        return [c for c in photo.candidates if c.category != current and c.category not in exhausted]
 
     def apply_candidate(self, number: int) -> None:
         """Клавиши 1 и 2: каждому выбранному фото назначается его собственный вариант с этим номером."""

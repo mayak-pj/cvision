@@ -82,7 +82,8 @@ def build_report(match: FolderMatch, excluded: int = 0, problem_categories: Opti
 def _candidates(photo: PhotoMatch) -> str:
     if not photo.candidates:
         return ""
-    return "кандидаты: " + ", ".join("%s %.0f%%" % (c.category, c.confidence) for c in photo.candidates)
+    return "кандидаты: " + ", ".join("%s %.0f%%" % (c.category, c.confidence)
+                                     for c in photo.candidates[:3])   # в отчёт — три первых
 
 
 def format_report(report: FolderReport, plan: Optional[RenamePlan] = None, applied: bool = False) -> str:
