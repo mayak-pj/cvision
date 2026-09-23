@@ -148,6 +148,14 @@ _APP_KEYS = {
 }
 
 
+# Настройки, которых больше нет. Файл настроек остаётся у пользователя от прежних версий,
+# и ругаться на них незачем: программа просто их не читает.
+_OBSOLETE_KEYS = {
+    "reference_gap_warning",   # предупреждение «папка мало похожа на эталон» убрано
+    "side_order_penalty",      # плата за съёмку сторон не по порядку: правило отменено
+}
+
+
 def from_dict(data: dict) -> Tuple[AppConfig, List[str]]:
     config = AppConfig()
     warnings: List[str] = []
@@ -155,6 +163,8 @@ def from_dict(data: dict) -> Tuple[AppConfig, List[str]]:
         return config, ["Настройки должны быть JSON-объектом, используются значения по умолчанию"]
     for key, value in data.items():
         if key.startswith("_"):
+            continue
+        if key in _OBSOLETE_KEYS:
             continue
         check = _MATCH_KEYS.get(key) or _APP_KEYS.get(key)
         if check is None:

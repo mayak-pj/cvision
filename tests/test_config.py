@@ -62,3 +62,16 @@ def test_save_load_roundtrip(tmp_path):
     loaded, warnings = cfg.load_config(path)
     assert warnings == []
     assert cfg.to_dict(loaded) == cfg.to_dict(config)
+
+
+def test_removed_settings_do_not_warn():
+    """Настройка, которой больше нет, остаётся в файле у пользователя — ругаться на неё незачем."""
+    config, warnings = cfg.from_dict({"reference_gap_warning": 1.1, "min_confidence": 60})
+    assert warnings == []
+    assert config.match.min_confidence == 60
+
+
+def test_unknown_settings_still_warn():
+    """Опечатка в названии настройки должна быть видна."""
+    _, warnings = cfg.from_dict({"min_confidense": 60})
+    assert any("min_confidense" in w for w in warnings)
