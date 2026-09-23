@@ -522,16 +522,20 @@ def test_buttons_have_equal_gaps(batch):
 
 
 def test_category_list_fits_the_longest_name(batch):
-    """Список категорий шире самого длинного названия: обрезанный список читать невозможно."""
+    """Ширина правой колонки считается по самому длинному названию: обрезанный список не прочитать.
+
+    Проверяется расчёт, а не готовая геометрия окна: на машине сборки окно скрыто,
+    и фактические размеры виджетов там не вычисляются.
+    """
     import tkinter.font as tkfont
 
     win, _ = batch
     win.categories.append("Панель USB, VGA, кнопок и индикации")
     win._refresh_categories()
-    win.update()
     font = tkfont.Font(font=win.categories_list.cget("font"))
     longest = max(win.categories_list.get(0, "end"), key=font.measure)
-    assert font.measure(longest) <= win.categories_list.winfo_width()
+    assert int(win.side.cget("width")) >= font.measure(longest)
+    assert int(win.side.cget("width")) <= review_mod.MAX_SIDE_WIDTH
 
 
 def test_candidate_buttons_are_left_aligned(batch):
