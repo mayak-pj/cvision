@@ -34,6 +34,7 @@ def batch(tmp_path, monkeypatch):
     config = cfg.AppConfig()
     config.cache_dir = str(tmp_path / "cache")
     config.logs_dir = str(tmp_path / "logs")
+    config.names_file = str(tmp_path / "names.txt")   # список категорий пользователя не трогаем
     try:
         root = tk.Tk()
     except tk.TclError as exc:
@@ -266,3 +267,37 @@ def test_only_two_candidates_are_numbered(batch):
     numbered = [t for t in texts if t.startswith(("1 —", "2 —", "3 —"))]
     assert numbered[-1] == "3 — не переименовывать"
     assert len([t for t in texts if "%" in t]) <= 2
+
+
+def test_add_and_remove_category(batch, monkeypatch, tmp_path):
+    """Две маленькие кнопки у списка: добавить свою категорию и удалить её."""
+    win, _ = batch
+    reference_count = len(win.reference_categories)
+
+    monkeypatch.setattr(review_mod.simpledialog, "askstring", lambda *a, **k: "Планка индикации")
+    monkeypatch.setattr(review_mod.simpledialog, "askinteger", lambda *a, **k: 2)
+    win.add_category()
+    assert "Планка индикации" in win.categories
+    assert len(win.categories) == reference_count + 1
+    assert "Планка индикации" in win.names.names()          # запомнилось в names.txt
+
+    select_row(win, 0)
+    filename = win.tree.item(win.tree.get_children()[0], "text").strip()
+    win.apply_category("Планка индикации")                  # категории нет в эталоне — всё равно работает
+    assert row_of(win, filename)[0].startswith("Планка индикации")
+
+    monkeypatch.setattr(review_mod.messagebox, "askyesno", lambda *a, **k: True)
+    win._select_category("Планка индикации")
+    win.remove_category()
+    assert "Планка индикации" not in win.categories
+
+
+def test_reference_category_is_not_removed(batch, monkeypatch):
+    """Категорию самого эталона из списка не убрать: её задаёт образец."""
+    win, _ = batch
+    said = []
+    monkeypatch.setattr(review_mod.messagebox, "showinfo", lambda title, text, **k: said.append(text))
+    win._select_category(win.reference_categories[0])
+    win.remove_category()
+    assert said and "эталона" in said[0]
+    assert win.reference_categories[0] in win.categories

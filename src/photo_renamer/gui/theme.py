@@ -143,6 +143,61 @@ def apply_to_existing(widget: tk.Misc, mode: str = None) -> None:
         apply_to_existing(child, mode)
 
 
+class IconButton(tk.Canvas):
+    """Маленькая кнопка с нарисованным значком: «плюс» — добавить, «урна» — удалить.
+
+    Значок рисуется, а не берётся из шрифта: на Windows 7 символы вроде «✓» и «🗑»
+    в tkinter отображаются не везде, а рисунок выглядит одинаково всюду.
+    """
+
+    def __init__(self, master, kind: str, command=None, size: int = 22, hint: str = "", **kwargs):
+        super().__init__(master, width=size, height=size, highlightthickness=0, borderwidth=0,
+                         cursor="hand2", **kwargs)
+        self.kind = kind
+        self.size = size
+        self.command = command
+        self.bind("<Button-1>", lambda event: self.command() if self.command else None)
+        if hint:
+            self.bind("<Enter>", lambda event: self._show_hint(hint))
+            self.bind("<Leave>", lambda event: self._hide_hint())
+        self._hint_window = None
+        self.redraw()
+
+    def _show_hint(self, text: str) -> None:
+        self._hide_hint()
+        palette = colors()
+        self._hint_window = tk.Toplevel(self)
+        self._hint_window.wm_overrideredirect(True)
+        self._hint_window.wm_geometry("+%d+%d" % (self.winfo_rootx(), self.winfo_rooty() + self.size + 2))
+        tk.Label(self._hint_window, text=text, background=palette["surface"], foreground=palette["text"],
+                 borderwidth=1, relief="solid", padx=4).pack()
+
+    def _hide_hint(self) -> None:
+        if self._hint_window is not None:
+            self._hint_window.destroy()
+            self._hint_window = None
+
+    def redraw(self) -> None:
+        palette = colors()
+        # фон как у полей ввода: apply_to_existing красит холсты именно так, и кнопка
+        # не «выпадает» из оформления после переключения темы
+        self.configure(background=palette["surface"])
+        self.delete("all")
+        size, color = self.size, palette["text"]
+        if self.kind == "add":
+            middle, arm = size / 2, size * 0.28
+            self.create_line(middle - arm, middle, middle + arm, middle, fill=color, width=2)
+            self.create_line(middle, middle - arm, middle, middle + arm, fill=color, width=2)
+        else:                                   # урна
+            left, right = size * 0.26, size * 0.74
+            top, bottom = size * 0.34, size * 0.80
+            self.create_rectangle(left, top, right, bottom, outline=color, width=2)
+            self.create_line(size * 0.18, top, size * 0.82, top, fill=color, width=2)
+            self.create_line(size * 0.40, size * 0.22, size * 0.60, size * 0.22, fill=color, width=2)
+            for x in (size * 0.42, size * 0.58):
+                self.create_line(x, top + size * 0.10, x, bottom - size * 0.08, fill=color, width=1)
+
+
 class LampButton(tk.Canvas):
     """Переключатель оформления в виде лампочки: горит — светлая тема, погашена — тёмная."""
 

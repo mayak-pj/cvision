@@ -8,7 +8,7 @@
 
 import os
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 from typing import Dict, List, Optional
 
 from .. import config as cfg, grouping, matcher, names as names_mod, oplog, renamer
@@ -146,7 +146,13 @@ class BatchWindow(tk.Toplevel):
 
         self.candidates_frame = ttk.Frame(side)
         self.candidates_frame.pack(fill="x", pady=(4, 8))
-        ttk.Label(side, text="Категория из эталона:").pack(anchor="w")
+        header = ttk.Frame(side)
+        header.pack(fill="x")
+        ttk.Label(header, text="Категория:").pack(side="left")
+        theme.IconButton(header, "delete", command=self.remove_category,
+                         hint="Удалить категорию из списка").pack(side="right")
+        theme.IconButton(header, "add", command=self.add_category,
+                         hint="Добавить категорию в список").pack(side="right", padx=(0, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self._refresh_categories())
         ttk.Entry(side, textvariable=self.search_var).pack(fill="x", pady=(2, 4))
@@ -196,7 +202,9 @@ class BatchWindow(tk.Toplevel):
             return
         finally:
             self._busy = False
-        self.categories = [c.name for c in self.model.categories]
+        self.reference_categories = [c.name for c in self.model.categories]
+        self.names = names_mod.NamesList(self.app_config.names_path())
+        self.categories = self._all_categories()
         self.log.write_text("Эталон: %s\nПапок в группе: %d" % (self.group.reference.path, self.total))
         for warning in self.model.warnings:
             self.log.write_text("ВНИМАНИЕ: " + warning)
@@ -416,6 +424,60 @@ class BatchWindow(tk.Toplevel):
         ttk.Button(self.candidates_frame, text="3 — не переименовывать",
                    command=self.exclude_selected).pack(fill="x", pady=(4, 1))
 
+    def _all_categories(self) -> List[str]:
+        """Категории эталона плюс добавленные вручную (names.txt рядом с программой)."""
+        extra = [name for name in self.names.names() if name not in self.reference_categories]
+        return self.reference_categories + sorted(extra)
+
+    def add_category(self) -> None:
+        """Деталь, которой нет в эталоне: имя добавляется в список и сразу доступно для выбора."""
+        name = simpledialog.askstring(TITLE, "Новая категория:", parent=self,
+                                      initialvalue=self.search_var.get().strip())
+        if not name or not name.strip():
+            return
+        sides = simpledialog.askinteger(TITLE, "Сколько ракурсов у этой детали?", parent=self,
+                                        initialvalue=1, minvalue=1, maxvalue=9)
+        if not sides:
+            return
+        try:
+            name = self.names.add(name, sides)
+        except ValueError as exc:
+            messagebox.showerror(TITLE, str(exc), parent=self)
+            return
+        self.names.save()
+        if self.match is not None:
+            matcher.add_category(self.match, name, sides)
+        self.categories = self._all_categories()
+        self.search_var.set("")
+        self._refresh_categories()
+        self._select_category(name)
+
+    def remove_category(self) -> None:
+        """Удаляет имя из списка. Категории самого эталона не трогаются: их задаёт образец."""
+        selection = self.categories_list.curselection()
+        if not selection:
+            messagebox.showinfo(TITLE, "Выберите категорию в списке.", parent=self)
+            return
+        name = self.categories_list.get(selection[0])
+        if name in self.reference_categories:
+            messagebox.showinfo(TITLE, "«%s» — категория эталона, она задаётся образцом.\n"
+                                       "Удалить её можно только из эталона." % name, parent=self)
+            return
+        if not messagebox.askyesno(TITLE, "Удалить «%s» из списка категорий?" % name, parent=self):
+            return
+        self.names.remove(name)
+        self.names.save()
+        self.categories = self._all_categories()
+        self._refresh_categories()
+
+    def _select_category(self, name: str) -> None:
+        for position in range(self.categories_list.size()):
+            if self.categories_list.get(position) == name:
+                self.categories_list.selection_clear(0, "end")
+                self.categories_list.selection_set(position)
+                self.categories_list.see(position)
+                break
+
     def _refresh_categories(self) -> None:
         self.categories_list.delete(0, "end")
         for name in names_mod.filter_names(self.search_var.get(), self.categories):
@@ -433,7 +495,10 @@ class BatchWindow(tk.Toplevel):
         if not indexes:
             messagebox.showinfo(TITLE, "Выберите фото в таблице.", parent=self)
             return
-        key = None if category is None else category_key(category)
+        key = None
+        if category is not None:
+            key = (matcher.add_category(self.match, category, self.names.sides_for(category))
+                   if category not in self.reference_categories else category_key(category))
         following = self._next_photo()
         for index in indexes:
             matcher.set_category(self.match, index, key)

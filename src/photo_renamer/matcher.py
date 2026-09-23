@@ -250,6 +250,8 @@ class FolderMatch:
     weights_used: Dict[str, float] = field(default_factory=dict)  # веса после подстройки под папку
     fixed: Dict[int, tuple] = field(default_factory=dict)           # уже названные по шаблону фото
     manual: Dict[int, Optional[str]] = field(default_factory=dict)  # выбор пользователя: ключ категории или None
+    # категории, которых нет в эталоне: пользователь добавил их вручную для этой папки
+    extra_categories: Dict[str, Category] = field(default_factory=dict)
 
     def category_counts(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
@@ -257,6 +259,11 @@ class FolderMatch:
             if p.identified:
                 counts[p.category.name] = counts.get(p.category.name, 0) + 1
         return counts
+
+    def category_by_key(self, key: str) -> Category:
+        """Категория эталона или добавленная пользователем (см. add_category)."""
+        category = self.model.reference.categories.get(key)
+        return category if category is not None else self.extra_categories[key]
 
     def unidentified(self) -> List[PhotoMatch]:
         return [p for p in self.photos if not p.identified]
@@ -362,7 +369,7 @@ def solve(result: FolderMatch) -> None:
             photo.note = "исключено вручную"
         else:
             photo.status = STATUS_MANUAL
-            photo.category = model.reference.categories[key]
+            photo.category = result.category_by_key(key)
             photo.confidence = 100.0
             photo.note = "категория задана вручную"
 
@@ -824,6 +831,20 @@ def renumber(result: FolderMatch) -> None:
                     "Неполный комплект сторон: %s %d — %d фото из %d (%s)"
                     % (cat.name, instance, len(group), cat.sides,
                        ", ".join(photos[i].filename for i, _ in group)))
+
+
+def add_category(result: FolderMatch, name: str, sides: int = 1) -> str:
+    """Категория, которой нет в эталоне: пользователь встретил деталь, не попавшую в образец.
+
+    Возвращает ключ, с которым её можно задать фото (set_category). Имена таких категорий
+    строятся по тому же шаблону, что и эталонные: «Категория N фото K».
+    """
+    key = category_key(name)
+    if key in result.model.reference.categories or key in result.extra_categories:
+        return key
+    result.extra_categories[key] = Category(name=name.strip(), numbered=False, has_side_suffix=sides > 1,
+                                            sides=max(1, int(sides)), instances=0)
+    return key
 
 
 def set_category(result: FolderMatch, index: int, key: Optional[str]) -> None:
