@@ -408,15 +408,25 @@ class BatchWindow(tk.Toplevel):
                 self.tree.see(iid)
                 return
 
+    @staticmethod
+    def _alternatives(photo) -> List:
+        """Другие подходящие категории — без той, что уже стоит в столбце «Новое имя».
+
+        Предлагать в списке то же самое, что программа и так выбрала, незачем: если имя верное,
+        его просто оставляют, а если нет — нужны именно другие варианты.
+        """
+        current = photo.category.name if photo.identified else None
+        return [c for c in photo.candidates if c.category != current]
+
     def apply_candidate(self, number: int) -> None:
-        """Клавиши 1–3: каждому выбранному фото назначается его собственный кандидат с этим номером."""
+        """Клавиши 1 и 2: каждому выбранному фото назначается его собственный вариант с этим номером."""
         indexes = self._selected_indexes()
         if not indexes:
             return
         following = self._next_photo()
         applied = 0
         for index in indexes:
-            candidates = self.match.photos[index].candidates
+            candidates = self._alternatives(self.match.photos[index])
             if len(candidates) >= number:
                 matcher.set_category(self.match, index, category_key(candidates[number - 1].category))
                 applied += 1
@@ -432,11 +442,12 @@ class BatchWindow(tk.Toplevel):
             ttk.Label(self.candidates_frame, text="Выбрано фото: %d" % len(indexes)).pack(anchor="w")
             return
         photo = self.match.photos[indexes[0]]
-        if not photo.candidates:
-            ttk.Label(self.candidates_frame, text="Кандидатов нет").pack(anchor="w")
+        alternatives = self._alternatives(photo)
+        if not alternatives:
+            ttk.Label(self.candidates_frame, text="Других вариантов нет").pack(anchor="w")
         else:
-            ttk.Label(self.candidates_frame, text="Похоже на:").pack(anchor="w")
-            for number, candidate in enumerate(photo.candidates[:2], start=1):   # 3 занята под отказ
+            ttk.Label(self.candidates_frame, text="Похоже ещё на:").pack(anchor="w")
+            for number, candidate in enumerate(alternatives[:2], start=1):   # 3 занята под отказ
                 text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
                 ttk.Button(self.candidates_frame, text=text,
                            command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)

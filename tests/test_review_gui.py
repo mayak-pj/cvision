@@ -141,10 +141,10 @@ def test_candidate_hotkeys(batch):
     win._on_row_select()
     filename = win.tree.item(iid, "text").strip()
     photo = next(p for p in win.match.photos if p.filename == filename)
-    second = photo.candidates[1].category
+    second = win._alternatives(photo)[1].category      # варианты — без уже предложенной категории
 
     next_filename = win.tree.item(win.tree.get_children()[1], "text").strip()
-    win.apply_candidate(2)                 # клавиша «2» — второй кандидат
+    win.apply_candidate(2)                 # клавиша «2» — второй вариант
     assert row_of(win, filename)[0].startswith(second)
     assert row_of(win, filename)[2] == "выбрано вручную"
     # выделение перешло к следующей по таблице строке (той, что была под исправленной)
@@ -349,3 +349,24 @@ def test_double_click_without_selection_does_nothing(batch, monkeypatch):
     monkeypatch.setattr(review_mod, "LargeView", lambda *a, **k: (_ for _ in ()).throw(AssertionError("открыто зря")))
     win.tree.selection_remove(*win.tree.get_children())
     assert win._open_large() == "break"
+
+
+def test_proposed_category_is_not_offered_again(batch):
+    """В «Похоже ещё на:» не должно быть той категории, что уже стоит в столбце «Новое имя»."""
+    win, _ = batch
+    select_row(win, 0)
+    photo = win.match.photos[win._selected_indexes()[0]]
+    assert photo.identified
+    offered = [w.cget("text") for w in win.candidates_frame.winfo_children()]
+    assert not any(photo.category.name in text and "%" in text for text in offered)
+    assert all(c.category != photo.category.name for c in win._alternatives(photo))
+
+
+def test_alternatives_are_full_list_when_photo_is_not_named(batch):
+    """Если имя не предложено, из вариантов ничего не убирается."""
+    win, _ = batch
+    from photo_renamer import matcher
+
+    matcher.set_category(win.match, 0, None)            # «не переименовывать»
+    photo = win.match.photos[0]
+    assert len(win._alternatives(photo)) == len(photo.candidates)
