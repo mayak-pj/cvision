@@ -16,6 +16,7 @@ from ..cache import PhotoCache
 from ..reference import category_key, load_reference
 from ..report import build_report, format_report
 from . import theme
+from ..scanner import natural_key
 from .thumbgrid import to_photo
 
 TITLE = "Переименование папок"
@@ -23,8 +24,6 @@ TITLE = "Переименование папок"
 # «−» и «+». Значение запоминается в настройках. Верхняя граница — размер миниатюры в кэше:
 # крупнее пришлось бы заново читать исходные файлы (на сетевых дисках это долго).
 MIN_THUMB, MAX_THUMB, THUMB_STEP = 48, 320, 24
-PREVIEW_SIZE = 260          # крупный показ выбранного фото справа
-NEIGHBOUR_SIZE = 96         # соседние кадры под ним
 STATUS_TEXT = {
     matcher.STATUS_OK: "распознано",
     matcher.STATUS_SIDE_RULE: "по правилу сторон",
@@ -58,7 +57,6 @@ class BatchWindow(tk.Toplevel):
         self.folder: Optional[grouping.FolderInfo] = None
         self.categories: List[str] = []
         self._photos: Dict[str, tk.PhotoImage] = {}
-        self._preview_photos: List[tk.PhotoImage] = []   # ссылки, иначе tkinter покажет пустоту
         self._row_index: Dict[str, int] = {}
         self.thumb_size = int(getattr(app_config, "review_thumb", 96))
         self._busy = False
@@ -114,10 +112,11 @@ class BatchWindow(tk.Toplevel):
         self.style = ttk.Style(self)
         self.tree = ttk.Treeview(table, columns=("new", "confidence", "status"), selectmode="extended",
                                  style="Review.Treeview")
-        self.tree.heading("#0", text="Фото")
-        self.tree.heading("new", text="Новое имя")
-        self.tree.heading("confidence", text="Уверенность")
-        self.tree.heading("status", text="Состояние")
+        # по заголовкам столбцов сортируют щелчком: первый щелчок — по возрастанию, второй — наоборот
+        self.sort_column, self.sort_reverse = "order", False
+        for column, title in (("#0", "Фото"), ("new", "Новое имя"),
+                              ("confidence", "Уверенность"), ("status", "Состояние")):
+            self.tree.heading(column, text=title, command=lambda c=column: self.sort_by(c))
         self.tree.column("new", width=330)
         self.tree.column("confidence", width=100, anchor="e", stretch=False)
         self.tree.column("status", width=170, stretch=False)
@@ -145,29 +144,6 @@ class BatchWindow(tk.Toplevel):
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
 
-        # крупный показ выбранного фото и соседних кадров: по ним видно, что это за деталь
-        # и к какой серии относится снимок (соседи важны, когда сомнительные строки подняты наверх)
-        preview = ttk.LabelFrame(side, text="Выбранное фото", padding=4)
-        preview.pack(fill="x")
-        self.preview_image = ttk.Label(preview, anchor="center")
-        self.preview_image.pack()
-        self.preview_caption = ttk.Label(preview, wraplength=PREVIEW_SIZE + 40, justify="center",
-                                         font="TkHeadingFont")
-        self.preview_caption.pack(fill="x")
-        self.neighbours_frame = ttk.Frame(preview)
-        self.neighbours_frame.pack(fill="x", pady=(4, 0))
-
-        ttk.Label(side, foreground="#555555", wraplength=300, justify="left",
-                  text="Клавиши в таблице: 1 и 2 — выбрать кандидата, 3 — не переименовывать. "
-                       "Ctrl+колесо — размер фото.\n"
-                       "Кнопка «Переименовать папку» переименует все фото, кроме помеченных "
-                       "«не переименовывать».").pack(anchor="w", pady=(6, 6))
-        self.only_doubtful = tk.BooleanVar(value=False)
-        ttk.Checkbutton(side, text="Показать только требующие проверки", variable=self.only_doubtful,
-                        command=self.render_rows).pack(anchor="w")
-        self.sort_doubtful = tk.BooleanVar(value=True)
-        ttk.Checkbutton(side, text="Сомнительные — первыми", variable=self.sort_doubtful,
-                        command=self.render_rows).pack(anchor="w", pady=(0, 6))
         self.candidates_frame = ttk.Frame(side)
         self.candidates_frame.pack(fill="x", pady=(4, 8))
         ttk.Label(side, text="Категория из эталона:").pack(anchor="w")
@@ -186,8 +162,6 @@ class BatchWindow(tk.Toplevel):
         self.categories_list.pack(side="left", fill="both", expand=True)
         cat_scroll.pack(side="left", fill="y")
         self.categories_list.bind("<Double-Button-1>", lambda e: self.apply_selected_category())
-
-        self._show_preview(None)
 
     # --- ход обработки ------------------------------------------------------------------
 
@@ -256,10 +230,31 @@ class BatchWindow(tk.Toplevel):
         self.render_rows()
         self.load_thumbnails()
 
+    SORT_KEYS = {
+        "order": lambda p: (p.index,),
+        "#0": lambda p: (natural_key(p.filename), p.index),
+        "new": lambda p: (natural_key(p.new_name or ""), p.index),
+        "confidence": lambda p: (p.confidence, p.index),
+        "status": lambda p: (STATUS_TEXT.get(p.status, ""), p.index),
+    }
+
+    def sort_by(self, column: str) -> None:
+        """Щелчок по заголовку столбца: сортировка по нему, повторный щелчок — в обратную сторону."""
+        self.sort_reverse = not self.sort_reverse if column == self.sort_column else False
+        self.sort_column = column
+        self._show_sort_marks()
+        self.render_rows()
+
+    def _show_sort_marks(self) -> None:
+        arrow = " ↑" if not self.sort_reverse else " ↓"
+        for column, title in (("#0", "Фото"), ("new", "Новое имя"),
+                              ("confidence", "Уверенность"), ("status", "Состояние")):
+            self.tree.heading(column, text=title + (arrow if column == self.sort_column else ""))
+
     def _display_photos(self) -> List:
-        photos = [p for p in self.match.photos if not self.only_doubtful.get() or self._is_doubtful(p)]
-        if self.sort_doubtful.get():  # сомнительные первыми, внутри — порядок съёмки
-            photos.sort(key=lambda p: (not self._is_doubtful(p), p.index))
+        photos = list(self.match.photos)
+        photos.sort(key=self.SORT_KEYS.get(self.sort_column, self.SORT_KEYS["order"]),
+                    reverse=self.sort_reverse)
         return photos
 
     def render_rows(self) -> None:
@@ -402,52 +397,11 @@ class BatchWindow(tk.Toplevel):
             self.render_rows()
             self._select_photo(following)
 
-    def _describe(self, index: int) -> str:
-        """Как подписано фото: новое имя, если есть, иначе состояние."""
-        if not 0 <= index < len(self.match.photos):
-            return "—"
-        photo = self.match.photos[index]
-        if photo.new_name:
-            return photo.new_name
-        if photo.identified:
-            return photo.filename + " (имя не меняется)"
-        return photo.filename + " — " + STATUS_TEXT.get(photo.status, "")
-
-    def _show_preview(self, index: Optional[int]) -> None:
-        """Крупный показ выбранного фото и соседних кадров по порядку съёмки.
-
-        Соседи важны, когда сомнительные строки подняты наверх: рядом в таблице стоят
-        не соседние кадры, а по соседним кадрам как раз видно, к какой серии относится снимок.
-        """
-        for widget in self.neighbours_frame.winfo_children():
-            widget.destroy()
-        self._preview_photos = []
-        if index is None:
-            self.preview_image.configure(image="", text="Выберите фото в таблице")
-            self.preview_caption.configure(text="")
-            return
-        big = self._thumbnail(index, PREVIEW_SIZE)
-        self.preview_image.configure(image=big or "", text="" if big else "фото не прочитано")
-        if big is not None:
-            self._preview_photos.append(big)
-        self.preview_caption.configure(text=self._describe(index))
-        for shift, title in ((-1, "до"), (1, "после")):
-            cell = ttk.Frame(self.neighbours_frame)
-            cell.pack(side="left", expand=True)
-            small = self._thumbnail(index + shift, NEIGHBOUR_SIZE)
-            image_label = ttk.Label(cell, image=small or "", text="" if small else "—", anchor="center")
-            image_label.pack()
-            if small is not None:
-                self._preview_photos.append(small)
-            ttk.Label(cell, text="%s: %s" % (title, self._describe(index + shift)),
-                      wraplength=NEIGHBOUR_SIZE + 40, justify="center").pack()
-
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
             widget.destroy()
         indexes = self._selected_indexes()
         if len(indexes) != 1:
-            self._show_preview(None)
             ttk.Label(self.candidates_frame, text="Выбрано фото: %d" % len(indexes)).pack(anchor="w")
             return
         photo = self.match.photos[indexes[0]]
@@ -459,13 +413,8 @@ class BatchWindow(tk.Toplevel):
                 text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
                 ttk.Button(self.candidates_frame, text=text,
                            command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
-            for candidate in photo.candidates[2:]:
-                text = "      %s — %.0f%%" % (candidate.category, candidate.confidence)
-                ttk.Button(self.candidates_frame, text=text,
-                           command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
         ttk.Button(self.candidates_frame, text="3 — не переименовывать",
                    command=self.exclude_selected).pack(fill="x", pady=(4, 1))
-        self._show_preview(photo.index)
 
     def _refresh_categories(self) -> None:
         self.categories_list.delete(0, "end")

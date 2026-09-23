@@ -133,42 +133,6 @@ def test_skip_folder_finishes(batch):
     assert str(win.apply_btn["state"]) == "disabled"
 
 
-def test_only_doubtful_filter(batch):
-    win, _ = batch
-    from photo_renamer import matcher
-
-    total = len(win.tree.get_children())
-    win.match.photos[2].status = matcher.STATUS_CHECK      # программа не уверена в имени
-    win.render_rows()
-    assert len(win.tree.get_children()) == total           # фильтр выключен — видно всё
-    assert "проверить: 1" in win.status_var.get()
-
-    win.only_doubtful.set(True)
-    win.render_rows()
-    rows_left = win.tree.get_children()
-    assert len(rows_left) == 1
-    assert win.tree.item(rows_left[0], "values")[2] == "ПРОВЕРЬТЕ"
-
-    win.only_doubtful.set(False)
-    win.render_rows()
-    assert len(win.tree.get_children()) == total
-
-
-def test_doubtful_rows_come_first(batch):
-    win, _ = batch
-    from photo_renamer import matcher
-
-    doubtful = win.match.photos[3]
-    doubtful.status = matcher.STATUS_CHECK
-    win.render_rows()
-    assert win.tree.item(win.tree.get_children()[0], "text").strip() == doubtful.filename
-
-    win.sort_doubtful.set(False)          # выключаем — возвращается порядок съёмки
-    win.render_rows()
-    order = [win.tree.item(iid, "text").strip() for iid in win.tree.get_children()]
-    assert order == [p.filename for p in win.match.photos]
-
-
 def test_candidate_hotkeys(batch):
     win, _ = batch
     iid = win.tree.get_children()[0]
@@ -209,20 +173,6 @@ def all_labels(widget):
     return texts
 
 
-def test_neighbours_are_shown_for_selected_photo(batch):
-    win, _ = batch
-    win.sort_doubtful.set(False)          # порядок съёмки
-    win.render_rows()
-    select_row(win, 2)
-    selected = win.match.photos[2]
-    assert (selected.new_name or selected.filename) in win.preview_caption.cget("text")
-    texts = all_labels(win.neighbours_frame)
-    assert any(t.startswith("до: ") for t in texts)
-    assert any(t.startswith("после: ") for t in texts)
-    previous = win.match.photos[1]
-    assert any((previous.new_name or previous.filename) in t for t in texts)
-
-
 def test_photo_size_is_adjustable_and_remembered(batch):
     """Крупные фото: размер меняется кнопками и Ctrl+колесом, не выходит за границы и запоминается."""
     win, _ = batch
@@ -255,14 +205,6 @@ def test_bottom_row_stays_visible_on_small_screen(batch):
         assert height - 60 <= bottom <= height, "кнопка не внизу окна: %s" % name
 
 
-def test_preview_is_empty_without_single_selection(batch):
-    win, _ = batch
-    win.render_rows()
-    win.tree.selection_set(win.tree.get_children()[:2])       # выбрано два фото сразу
-    win._on_row_select()
-    assert win.preview_caption.cget("text") == ""
-
-
 def test_marked_photos_are_kept_and_the_rest_are_renamed(batch, monkeypatch):
     """«Не переименовывать» — осознанный выбор: спрашивать про такие фото не нужно,
     а остальные переименовываются, даже если программа в них не уверена."""
@@ -282,3 +224,45 @@ def test_marked_photos_are_kept_and_the_rest_are_renamed(batch, monkeypatch):
     after = set(os.listdir(str(root_dir / "SN2")))
     assert set(kept) <= after                       # помеченные остались с прежними именами
     assert any(not name.startswith("IMG_") for name in after)   # остальные переименованы
+
+
+def test_sorting_by_column_headers(batch):
+    """Сортировка щелчком по заголовку: первый щелчок — по возрастанию, второй — наоборот."""
+    win, _ = batch
+    order = [p.filename for p in win.match.photos]
+    assert [r[0] for r in rows(win)] == order          # по умолчанию — порядок съёмки
+
+    win.sort_by("#0")
+    by_name = [r[0] for r in rows(win)]
+    assert by_name == sorted(order)
+    assert "↑" in win.tree.heading("#0", "text")
+
+    win.sort_by("#0")                                   # повторный щелчок — обратный порядок
+    assert [r[0] for r in rows(win)] == sorted(order, reverse=True)
+    assert "↓" in win.tree.heading("#0", "text")
+
+    win.sort_by("confidence")
+    values = [float(r[1].rstrip("%") or 0) for r in
+              [(win.tree.item(iid, "text").strip(), win.tree.item(iid, "values")[1]) for iid in win.tree.get_children()]]
+    assert values == sorted(values)
+
+
+def test_sorting_by_status_groups_doubtful_together(batch):
+    """Столбец «Состояние» заменяет прежние галочки: сомнительные собираются рядом."""
+    win, _ = batch
+    from photo_renamer import matcher
+
+    win.match.photos[3].status = matcher.STATUS_CHECK
+    win.sort_by("status")
+    states = [win.tree.item(iid, "values")[2] for iid in win.tree.get_children()]
+    assert states == sorted(states)
+
+
+def test_only_two_candidates_are_numbered(batch):
+    """Клавиши 1 и 2 — кандидаты, 3 — отказ; третьей кнопки-кандидата быть не должно."""
+    win, _ = batch
+    select_row(win, 0)
+    texts = [w.cget("text") for w in win.candidates_frame.winfo_children() if w.cget("text")]
+    numbered = [t for t in texts if t.startswith(("1 —", "2 —", "3 —"))]
+    assert numbered[-1] == "3 — не переименовывать"
+    assert len([t for t in texts if "%" in t]) <= 2
