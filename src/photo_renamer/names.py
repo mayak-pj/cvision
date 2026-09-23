@@ -37,7 +37,9 @@ def filter_names(query: str, names: Iterable[str]) -> List[str]:
     names = list(names)
     query = fold(query).strip()
     if not query:
-        return names
+        # без запроса список показывается по алфавиту: так добавленная категория встаёт
+        # на своё место, а не в конец. Порядок в файле при этом не меняется
+        return sorted(names, key=fold)
     tokens = _words(query)
     matches = []
     for name in names:

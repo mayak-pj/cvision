@@ -2,7 +2,7 @@
 
 import pytest
 
-from photo_renamer.names import NamesList
+from photo_renamer.names import NamesList, filter_names, fold as names_fold
 
 SAMPLE = """# список категорий
 Плата оперативной памяти | 2
@@ -38,7 +38,7 @@ def test_search_by_word_start(names):
     assert names.search("pcie") == ["Плата расширения PCIE"]
     assert names.search("к") == ["Кабель волоконно-оптический", "Кулер"]
     assert names.search("оптический") == ["Кабель волоконно-оптический"]  # слово в середине имени
-    assert names.search("") == names.names()
+    assert names.search("") == sorted(names.names(), key=names_fold)   # без запроса — по алфавиту
 
 
 def test_search_is_case_and_yo_insensitive(tmp_path):
@@ -89,9 +89,20 @@ def test_empty_name_rejected():
 
 
 def test_filter_names_function():
-    from photo_renamer.names import filter_names
-
     names = ["Кабель питания", "Кабель соединительный", "Плата оперативной памяти", "Блок питания"]
     assert filter_names("пит", names) == ["Блок питания", "Кабель питания"]  # равный ранг — по алфавиту
     assert filter_names("каб пит", names) == ["Кабель питания"]
-    assert filter_names("", names) == names
+    assert filter_names("", names) == sorted(names)    # без запроса список идёт по алфавиту
+
+
+def test_list_without_query_is_alphabetical():
+    """Без запроса список идёт по алфавиту: добавленная категория встаёт на своё место."""
+    names = ["Процессор", "Вентилятор", "Съемный накопитель HDD", "Аккумулятор"]
+    assert filter_names("", names) == ["Аккумулятор", "Вентилятор", "Процессор",
+                                       "Съемный накопитель HDD"]
+
+
+def test_search_ranking_is_kept():
+    """С запросом сначала идут имена, начинающиеся с него, и уже внутри — по алфавиту."""
+    names = ["Плата расширения", "Кабель питания", "Плата оперативной памяти"]
+    assert filter_names("плата", names) == ["Плата оперативной памяти", "Плата расширения"]
