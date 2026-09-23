@@ -74,9 +74,10 @@ class MatchConfig:
     extra_penalty: float = 0.05         # штраф за экземпляр сверх количества в эталоне
     temperature: float = 0.05           # «резкость» % уверенности
     min_confidence: float = 50.0        # ниже — фото считается неопознанным
-    # Сколько кандидатов запоминать. Берём с запасом: в предпросмотре из них убираются уже
-    # предложенная категория и те, что по составу эталона исчерпаны, — иначе выбирать не из чего.
-    top_n: int = 5
+    # Сколько кандидатов показывать в отчёте и журнале. Запоминаются все категории по порядку
+    # похожести: в предпросмотре из них убираются уже предложенная и закрытые по составу,
+    # и на их место должны вставать следующие.
+    top_n: int = 3
     side_fill_max_distance: float = 0.50  # до какого расстояния соседнее фото достраивает сторону
     side_fill_top_k: int = 2            # ...и только если категория среди стольких первых кандидатов фото
     # Во сколько обходится пропущенная сторона детали при делении серии на экземпляры.
@@ -517,7 +518,7 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
         if assigned[r] >= 0 and not spare[r]:
             full[assigned[r]] = False
         conf = _confidences(cat_dist[r] + config.extra_penalty * full, config)
-        order = np.argsort(-conf, kind="stable")[: config.top_n]
+        order = np.argsort(-conf, kind="stable")      # все категории по убыванию похожести
         photo = result.photos[i]
         photo.candidates = [Candidate(model.categories[c].name, float(conf[c]), float(cat_dist[r, c])) for c in order]
         c = assigned[r]

@@ -90,7 +90,7 @@ def test_folder_with_duplicate_missing_and_foreign(model, tmp_path):
         "Блок питания.JPG",
     ]
     assert not result.photos[4].identified          # посторонний снимок не переименован
-    assert len(result.photos[4].candidates) == MatchConfig().top_n
+    assert len(result.photos[4].candidates) == len(model.categories)
     assert "Кабель HDMI" not in result.category_counts()
 
 

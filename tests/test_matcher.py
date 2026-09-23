@@ -134,7 +134,9 @@ def test_unrelated_photo_is_not_matched():
     unknown = result.photos[1]
     assert unknown.status == STATUS_NO_MATCH
     assert unknown.new_name is None
-    assert len(unknown.candidates) == MatchConfig().top_n     # кандидаты запоминаются с запасом
+    assert len(unknown.candidates) == len(result.model.categories)   # запоминаются все категории
+    assert [c.confidence for c in unknown.candidates] == sorted(
+        (c.confidence for c in unknown.candidates), reverse=True)    # по убыванию похожести
     assert result.unidentified() == [unknown]
 
 

@@ -404,3 +404,33 @@ def test_exhausted_rule_ignores_guesses(batch):
     guessed = [p.category.name for p in win.match.photos if p.identified and p.status != "manual"]
     assert win._exhausted_categories() == set() or all(name not in win._exhausted_categories()
                                                        for name in guessed)
+
+
+def test_second_slot_is_refilled_after_a_category_is_closed(batch):
+    """Когда категория закрыта, на её место встаёт следующий вариант, а не пустое место.
+
+    Случай заказчика: отметил «кабель miniSAS», и под цифрой 2 осталась дырка.
+    """
+    win, _ = batch
+    from photo_renamer import matcher
+
+    win.match.strict = True
+    photo = next(p for p in win.match.photos if p.identified)
+    before = [c.category for c in win._alternatives(photo)]
+    assert len(before) >= 2
+
+    closing = before[1]                       # закрываем ту категорию, что стоит под цифрой 2
+    capacity = next(len(c.photos) for c in win.model.categories if c.name == closing)
+    marked = 0
+    for other in win.match.photos:
+        if marked >= capacity:
+            break
+        if other.index != photo.index:
+            matcher.set_category(win.match, other.index, category_key_of(closing))
+            marked += 1
+    assert closing in win._exhausted_categories()
+
+    after = [c.category for c in win._alternatives(photo)]
+    assert closing not in after
+    assert len(after) == len(before) - 1       # исчезла ровно одна, остальные подтянулись
+    assert after[:1] == before[:1]             # первый вариант не изменился
