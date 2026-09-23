@@ -82,3 +82,17 @@ def test_apply_to_existing_recolors_open_windows(root):
     assert listbox.cget("background") == theme.DARK["surface"]
     assert window.cget("background") == theme.DARK["background"]
     window.destroy()
+
+
+def test_table_heading_stays_readable_under_mouse(root):
+    """Заголовки столбцов — кнопки сортировки: под мышью clam подсвечивал их системным
+    светлым цветом, и на тёмном оформлении текст пропадал."""
+    from tkinter import ttk
+
+    for mode in ("dark", "light"):
+        theme.apply(root, mode)
+        style = ttk.Style(root)
+        palette = theme.colors(mode)
+        assert style.lookup("Treeview.Heading", "background", ["active"]) == palette["button_active"]
+        assert style.lookup("Treeview.Heading", "foreground", ["active"]) == palette["text"]
+        assert style.lookup("Treeview.Heading", "foreground", ["pressed"]) == palette["select_fg"]

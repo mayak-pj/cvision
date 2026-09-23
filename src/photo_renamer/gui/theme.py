@@ -96,6 +96,12 @@ def apply(root: tk.Misc, mode: str = "light") -> None:
     style.map("Treeview", background=[("selected", palette["select_bg"])],
               foreground=[("selected", palette["select_fg"])])
     style.configure("Treeview.Heading", background=palette["heading"], foreground=palette["text"])
+    # заголовки столбцов — кнопки сортировки, и под мышью clam подсвечивает их системным
+    # светлым цветом: на тёмном оформлении текст в них пропадал. Задаём цвета явно.
+    style.map("Treeview.Heading",
+              background=[("pressed", palette["select_bg"]), ("active", palette["button_active"])],
+              foreground=[("pressed", palette["select_fg"]), ("active", palette["text"])],
+              relief=[("pressed", "sunken"), ("active", "raised")])
     style.configure("TScrollbar", background=palette["button"], troughcolor=palette["background"],
                     arrowcolor=palette["text"])
 
