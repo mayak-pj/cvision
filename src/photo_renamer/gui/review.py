@@ -66,6 +66,7 @@ class BatchWindow(tk.Toplevel):
         self._busy = False
         self._cancel = False
         self._last_plan: Optional[renamer.RenamePlan] = None
+        self._undo: List[List[tuple]] = []      # шаги ручных правок для Ctrl+Z
 
         self.title(TITLE)
         self.minsize(900, 600)
@@ -144,9 +145,13 @@ class BatchWindow(tk.Toplevel):
             self.tree.bind(sequence, self._on_wheel)
         for key in ("<Delete>", "<BackSpace>"):
             self.tree.bind(key, lambda e: self.exclude_selected())
-        # двойной клик и Enter — посмотреть фото крупно, как в редакторе эталона
-        self.tree.bind("<Double-Button-1>", self._open_large)
-        self.tree.bind("<Return>", self._open_large)
+        self.tree.bind("<Double-Button-1>", self._open_large)   # посмотреть фото крупно
+        # Enter — подтвердить предложенное имя и перейти к следующей строке
+        self.tree.bind("<Return>", self.confirm_selected)
+        self.tree.bind("<KP_Enter>", self.confirm_selected)
+        for sequence in ("<Control-z>", "<Command-z>", "<Control-Z>", "<Command-Z>"):
+            self.tree.bind(sequence, self.undo_edit)
+            self.bind(sequence, self.undo_edit)
 
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
@@ -382,6 +387,59 @@ class BatchWindow(tk.Toplevel):
         LargeView(self, self.folder.path, names, indexes[0], self.cache)
         return "break"
 
+    _ABSENT = object()                       # признак «ручной правки для этого фото не было»
+
+    def _remember(self, indexes: List[int]) -> None:
+        """Запоминает, что было до правки: по Ctrl+Z всё вернётся одним шагом."""
+        step = [(index, self.match.manual.get(index, self._ABSENT)) for index in indexes]
+        if step:
+            self._undo.append(step)
+
+    def undo_edit(self, event=None):
+        """Ctrl+Z — отменяет последнюю ручную правку: и выбор цифрой, и Enter, и кнопки, и список."""
+        if not self._undo:
+            self.status_var.set("Отменять нечего")
+            return "break"
+        step = self._undo.pop()
+        for index, previous in step:
+            if previous is self._ABSENT:
+                self.match.manual.pop(index, None)
+            else:
+                self.match.manual[index] = previous
+        matcher.solve(self.match)
+        self.render_rows()
+        self._select_photos([index for index, _ in step])
+        self._update_counts()
+        return "break"
+
+    def _select_photos(self, indexes: List[int]) -> None:
+        wanted = {index for index in indexes}
+        rows = [iid for iid, photo_index in self._row_index.items() if photo_index in wanted]
+        if rows:
+            self.tree.selection_set(rows)
+            self.tree.focus(rows[0])
+            self.tree.see(rows[0])
+            self._on_row_select()
+
+    def confirm_selected(self, event=None):
+        """Enter — подтвердить предложенное имя как выбранное вручную и перейти к следующей строке."""
+        indexes = self._selected_indexes()
+        if not indexes:
+            return "break"
+        following = self._next_photo()
+        self._remember(indexes)
+        confirmed = 0
+        for index in indexes:
+            photo = self.match.photos[index]
+            if photo.identified and photo.status != matcher.STATUS_MANUAL:
+                matcher.set_category(self.match, index, photo.category.key)
+                confirmed += 1
+        if not confirmed:
+            self._undo.pop()                  # подтверждать было нечего — шага не было
+        self.render_rows()
+        self._select_photo(following)
+        return "break"
+
     def _selected_indexes(self) -> List[int]:
         return [self._row_index[iid] for iid in self.tree.selection() if iid in self._row_index]
 
@@ -446,16 +504,20 @@ class BatchWindow(tk.Toplevel):
         indexes = self._selected_indexes()
         if not indexes:
             return
-        following = self._next_photo()
+        self._remember(indexes)
         applied = 0
         for index in indexes:
             candidates = self._alternatives(self.match.photos[index])
             if len(candidates) >= number:
                 matcher.set_category(self.match, index, category_key(candidates[number - 1].category))
                 applied += 1
-        if applied:
-            self.render_rows()
-            self._select_photo(following)
+        if not applied:
+            self._undo.pop()                  # ничего не изменилось — и отменять нечего
+            return
+        self.render_rows()
+        # выделение остаётся на том же фото: имя видно сразу, и если оно неверное,
+        # можно выбрать другой вариант, не возвращаясь стрелкой вверх
+        self._select_photos(indexes)
 
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
@@ -550,11 +612,11 @@ class BatchWindow(tk.Toplevel):
         if category is not None:
             key = (matcher.add_category(self.match, category, self.names.sides_for(category))
                    if category not in self.reference_categories else category_key(category))
-        following = self._next_photo()
+        self._remember(indexes)
         for index in indexes:
             matcher.set_category(self.match, index, key)
         self.render_rows()
-        self._select_photo(following)
+        self._select_photos(indexes)
 
     def exclude_selected(self) -> None:
         self.apply_category(None)

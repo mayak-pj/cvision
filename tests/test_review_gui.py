@@ -54,6 +54,14 @@ def rows(win):
     return [(win.tree.item(iid, "text").strip(), win.tree.item(iid, "values")[0]) for iid in win.tree.get_children()]
 
 
+def iid_of(win, filename):
+    """Идентификатор строки по имени файла: после каждой правки таблица пересоздаётся."""
+    for iid in win.tree.get_children():
+        if win.tree.item(iid, "text").strip() == filename:
+            return iid
+    raise AssertionError(filename)
+
+
 def row_of(win, filename):
     """Строка таблицы по имени файла (порядок строк зависит от сортировки «сомнительные первыми»)."""
     for iid in win.tree.get_children():
@@ -143,13 +151,12 @@ def test_candidate_hotkeys(batch):
     photo = next(p for p in win.match.photos if p.filename == filename)
     second = win._alternatives(photo)[1].category      # варианты — без уже предложенной категории
 
-    next_filename = win.tree.item(win.tree.get_children()[1], "text").strip()
     win.apply_candidate(2)                 # клавиша «2» — второй вариант
     assert row_of(win, filename)[0].startswith(second)
     assert row_of(win, filename)[2] == "выбрано вручную"
-    # выделение перешло к следующей по таблице строке (той, что была под исправленной)
+    # выделение остаётся на том же фото: видно, что получилось, и можно выбрать другой вариант
     assert win.tree.selection()
-    assert win.tree.item(win.tree.selection()[0], "text").strip() == next_filename
+    assert win.tree.item(win.tree.selection()[0], "text").strip() == filename
 
 
 def test_hotkey_without_such_candidate_does_nothing(batch):
@@ -434,3 +441,52 @@ def test_second_slot_is_refilled_after_a_category_is_closed(batch):
     assert closing not in after
     assert len(after) == len(before) - 1       # исчезла ровно одна, остальные подтянулись
     assert after[:1] == before[:1]             # первый вариант не изменился
+
+
+def test_enter_confirms_and_moves_down(batch):
+    """Enter отмечает предложенное имя как выбранное вручную и переводит выделение ниже."""
+    win, _ = batch
+    win.sort_by("#0")                                  # порядок строк стабилен
+    rows_before = [win.tree.item(iid, "text").strip() for iid in win.tree.get_children()]
+    iid = win.tree.get_children()[0]
+    win.tree.selection_set(iid)
+    win._on_row_select()
+    filename = rows_before[0]
+
+    win.confirm_selected()
+    assert row_of(win, filename)[2] == "выбрано вручную"
+    assert win.tree.item(win.tree.selection()[0], "text").strip() == rows_before[1]
+
+
+def test_ctrl_z_undoes_the_last_edit(batch):
+    """Ctrl+Z возвращает то, что было до правки: и для цифры, и для Enter, и для списка."""
+    win, _ = batch
+    win.sort_by("#0")
+    iid = win.tree.get_children()[0]
+    win.tree.selection_set(iid)
+    win._on_row_select()
+    filename = win.tree.item(iid, "text").strip()
+    before = row_of(win, filename)
+
+    win.apply_candidate(1)
+    assert row_of(win, filename) != before
+    win.undo_edit()
+    assert row_of(win, filename) == before
+
+    win.tree.selection_set(iid_of(win, filename))     # строки пересозданы, ищем заново
+    win.apply_category("Кабель HDMI")
+    assert row_of(win, filename)[0] == "Кабель HDMI.JPG"
+    win.undo_edit()
+    assert row_of(win, filename) == before
+
+    win.tree.selection_set(iid_of(win, filename))
+    win.exclude_selected()
+    assert row_of(win, filename)[0] == "— не переименовывать —"
+    win.undo_edit()
+    assert row_of(win, filename) == before
+
+
+def test_ctrl_z_without_edits_says_so(batch):
+    win, _ = batch
+    win.undo_edit()
+    assert "Отменять нечего" in win.status_var.get()
