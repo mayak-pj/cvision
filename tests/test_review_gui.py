@@ -155,9 +155,9 @@ def test_candidate_hotkeys(batch):
     win.apply_candidate(2)                 # клавиша «2» — второй вариант
     assert row_of(win, filename)[0].startswith(second)
     assert row_of(win, filename)[2] == "выбрано вручную"
-    # выделение держится за МЕСТО: исправленное фото уезжает по алфавиту, а на его место
-    # встаёт следующий файл — обычно именно он получает освободившееся имя
-    assert win.tree.selection() and win.tree.selection()[0] == win.tree.get_children()[position]
+    # порядок строк не меняется, поэтому выделение просто уходит на строку ниже
+    assert win.tree.selection() and win.tree.selection()[0] == win.tree.get_children()[position + 1]
+    assert win.tree.item(win.tree.get_children()[position], "text").strip() == filename
 
 
 def test_hotkey_without_such_candidate_does_nothing(batch):
@@ -548,3 +548,19 @@ def test_candidate_buttons_are_left_aligned(batch):
     for widget in win.candidates_frame.winfo_children():
         if widget.winfo_class() == "TButton":
             assert str(widget.cget("style")) == "Candidate.TButton"
+
+
+def test_row_order_does_not_change_after_edits(batch):
+    """После правки строки остаются на местах: иначе неразобранные фото прыгают выше сделанных
+    и работать приходится то вниз, то вверх."""
+    win, _ = batch
+    before = [win.tree.item(iid, "text").strip() for iid in win.tree.get_children()]
+    win.tree.selection_set(win.tree.get_children()[0])
+    win._on_row_select()
+    win.apply_category("Кабель HDMI")
+    win.tree.selection_set(win.tree.get_children()[1])
+    win.apply_candidate(1)
+    assert [win.tree.item(iid, "text").strip() for iid in win.tree.get_children()] == before
+
+    win.sort_by("confidence")               # порядок меняется только по щелчку на заголовке
+    assert [win.tree.item(iid, "text").strip() for iid in win.tree.get_children()] != before

@@ -71,6 +71,7 @@ class BatchWindow(tk.Toplevel):
         self._cancel = False
         self._last_plan: Optional[renamer.RenamePlan] = None
         self._undo: List[List[tuple]] = []      # шаги ручных правок для Ctrl+Z
+        self._display_order: List[int] = []     # порядок строк, зафиксированный до следующей сортировки
 
         self.title(TITLE)
         self.minsize(900, 600)
@@ -262,7 +263,7 @@ class BatchWindow(tk.Toplevel):
             return
         finally:
             self._busy = False
-        self.render_rows()
+        self.resort()
         self.load_thumbnails()
 
     COLUMN_TITLES = (("#0", "Фото"), ("new", "Новое имя"),
@@ -280,6 +281,19 @@ class BatchWindow(tk.Toplevel):
         self.sort_reverse = not self.sort_reverse if column == self.sort_column else False
         self.sort_column = column
         self._show_sort_marks()
+        self.resort()
+
+    def resort(self) -> None:
+        """Пересчитывает порядок строк по выбранному столбцу и показывает таблицу заново.
+
+        Между сортировками порядок зафиксирован: после правки имена меняются и у соседей
+        (программа передаёт освободившееся имя другому фото), и если пересортировывать каждый
+        раз, неразобранные строки прыгают выше уже сделанных. Тогда приходится возвращаться
+        вверх, а работа должна идти сверху вниз.
+        """
+        photos = sorted(self.match.photos, key=self.SORT_KEYS.get(self.sort_column, self.SORT_KEYS["order"]),
+                        reverse=self.sort_reverse)
+        self._display_order = [photo.index for photo in photos]
         self.render_rows()
 
     def _show_sort_marks(self) -> None:
@@ -288,10 +302,10 @@ class BatchWindow(tk.Toplevel):
             self.tree.heading(column, text=title + (arrow if column == self.sort_column else ""))
 
     def _display_photos(self) -> List:
-        photos = list(self.match.photos)
-        photos.sort(key=self.SORT_KEYS.get(self.sort_column, self.SORT_KEYS["order"]),
-                    reverse=self.sort_reverse)
-        return photos
+        """Фото в порядке показа. Порядок задаётся сортировкой и держится до следующей."""
+        if not self._display_order:
+            return list(self.match.photos)
+        return [self.match.photos[index] for index in self._display_order]
 
     def render_rows(self) -> None:
         # выделение запоминается по фото: строки пересоздаются, и их идентификаторы меняются
@@ -558,7 +572,7 @@ class BatchWindow(tk.Toplevel):
             self._undo.pop()                  # ничего не изменилось — и отменять нечего
             return
         self.render_rows()
-        self._select_position(position)
+        self._select_position(None if position is None else position + 1)
 
     def _on_row_select(self) -> None:
         for widget in self.candidates_frame.winfo_children():
@@ -675,7 +689,7 @@ class BatchWindow(tk.Toplevel):
         for index in indexes:
             matcher.set_category(self.match, index, key)
         self.render_rows()
-        self._select_position(position)
+        self._select_position(None if position is None else position + 1)
 
     def exclude_selected(self) -> None:
         self.apply_category(None)
