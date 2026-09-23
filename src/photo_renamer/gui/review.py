@@ -120,8 +120,8 @@ class BatchWindow(tk.Toplevel):
         table = ttk.Frame(body)
         table.pack(side="left", fill="both", expand=True)
         self.style = ttk.Style(self)
-        # текст вариантов прижат к правому краю: проценты оказываются друг под другом
-        self.style.configure("Candidate.TButton", anchor="e")
+        # текст вариантов прижат к левому краю: номера 1, 2 и 3 оказываются друг под другом
+        self.style.configure("Candidate.TButton", anchor="w")
         self.tree = ttk.Treeview(table, columns=("new", "confidence", "status"), selectmode="extended",
                                  style="Review.Treeview")
         # по заголовкам столбцов сортируют щелчком: первый щелчок — по возрастанию, второй — наоборот

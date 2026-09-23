@@ -540,11 +540,11 @@ def test_category_list_fits_the_longest_name(batch):
     assert font.measure(longest) <= win.categories_list.winfo_width()
 
 
-def test_candidate_buttons_are_right_aligned(batch):
-    """Проценты в вариантах стоят друг под другом: текст кнопок прижат к правому краю."""
+def test_candidate_buttons_are_left_aligned(batch):
+    """Номера 1, 2 и 3 стоят друг под другом: текст кнопок прижат к левому краю."""
     win, _ = batch
     select_row(win, 0)
-    assert win.style.lookup("Candidate.TButton", "anchor") == "e"
+    assert win.style.lookup("Candidate.TButton", "anchor") == "w"
     for widget in win.candidates_frame.winfo_children():
         if widget.winfo_class() == "TButton":
             assert str(widget.cget("style")) == "Candidate.TButton"
