@@ -73,10 +73,10 @@ class MatchConfig:
     top_n: int = 3                      # сколько кандидатов показывать для неопознанных
     side_fill_max_distance: float = 0.50  # до какого расстояния соседнее фото достраивает сторону
     side_fill_top_k: int = 2            # ...и только если категория среди стольких первых кандидатов фото
+    # Во сколько обходится пропущенная сторона детали при делении серии на экземпляры.
+    # Меньше — программа охотнее признаёт, что какой-то стороны просто нет фото.
+    side_skip_penalty: float = 0.20
 
-    def for_features(self, has_clip: bool) -> Dict[str, float]:
-        """Веса под то, что реально посчитано: с моделью CLIP — свой набор, без неё — обычный."""
-        return dict(self.weights_with_clip if has_clip else self.weights)
     # Правило серий: одну и ту же деталь снимают подряд, поэтому окрестность кадра подсказывает
     # его категорию. Во втором проходе раскладки категория, за которую соседние кадры почти не
     # голосуют, получает штраф к расстоянию. 0 — не учитывать.
@@ -86,6 +86,10 @@ class MatchConfig:
     # категории эталона отстоят друг от друга. Измерено на реальных проектах: подходящие папки —
     # 0.7–0.9, папки из другой съёмки — 1.2 и 1.4.
     reference_gap_warning: float = 1.1
+
+    def for_features(self, has_clip: bool) -> Dict[str, float]:
+        """Веса под то, что реально посчитано: с моделью CLIP — свой набор, без неё — обычный."""
+        return dict(self.weights_with_clip if has_clip else self.weights)
 
 
 @dataclass
@@ -646,42 +650,90 @@ def _complete_sides(result: FolderMatch) -> None:
                 break
 
 
-def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[int]]:
-    """Делит серию на экземпляры по cat.sides фото. Неполный экземпляр ставится в начало или конец,
-    смотря что лучше согласуется с расстояниями до конкретных сторон эталона.
+def _side_costs(result: FolderMatch, cat: Category, idx: List[int]) -> np.ndarray:
+    """Матрица [фото серии][сторона]: насколько фото похоже на эту сторону детали в эталоне."""
+    c = result.model.cat_index.get(cat.key)
+    costs = np.zeros((len(idx), cat.sides))
+    for k, i in enumerate(idx):
+        row = result.feature_row.get(i)
+        if row is None or c is None:            # уже названное фото: подсказки нет, стороны равны
+            continue
+        for side in range(cat.sides):
+            d = result.side_dist[row, c, side]
+            costs[k, side] = d if np.isfinite(d) else result.cat_dist[row, c]
+    # Важна не величина расстояния, а насколько сторона хуже лучшей для этого же фото: у разных
+    # фото расстояния в разном масштабе, и без этого «далёкое от всего» фото перевешивало бы
+    # остальные. После вычитания минимума фото без явного предпочтения ни на что не влияет.
+    return costs - costs.min(axis=1, keepdims=True)
+
+
+def _split_run(result: FolderMatch, cat: Category, idx: List[int]) -> List[List[Tuple[int, int]]]:
+    """Делит серию на экземпляры и назначает каждому фото сторону: [[(фото, сторона), ...], ...].
+
+    Стороны детали различаются на вид (у съёмного накопителя это две стороны платы и корпус),
+    поэтому разбиение ищется не «по cat.sides подряд», а по тому, на какую сторону эталона
+    похоже каждое фото. Порядок сторон внутри экземпляра любой: на реальных съёмках деталь
+    снимают то с корпуса, то с платы, и номера «фото 1, 2, 3» порядку съёмки не подчиняются
+    (проверено на эталоне заказчика). Внутри экземпляра сторона не повторяется — по этому
+    признаку и находится граница между деталями.
+
+    Перебор всех вариантов сразу: динамическое программирование, состояние — набор сторон,
+    уже занятых в текущем экземпляре. Недостающая сторона разрешена, но стоит side_skip_penalty,
+    иначе выгодно было бы дробить серию на неполные экземпляры. Благодаря этому лишнее или
+    недостающее фото сдвигает только свой экземпляр, а не всю серию: раньше один такой кадр
+    сбивал нумерацию всех последующих деталей.
 
     Паузы между кадрами для деления намеренно не используются: между разными деталями пауза
-    бывает такой же короткой, как между сторонами одной детали.
+    бывает такой же короткой, как между сторонами одной.
     """
     sides = cat.sides
-    if sides == 1:
-        return [[i] for i in idx]
-    full, rest = divmod(len(idx), sides)
-    if rest == 0:
-        return [idx[k:k + sides] for k in range(0, len(idx), sides)]
+    if sides == 1 or not idx:
+        return [[(i, 1)] for i in idx]
 
-    def chunk(lengths):
-        out, pos = [], 0
-        for n in lengths:
-            out.append(idx[pos:pos + n])
-            pos += n
-        return out
+    costs = _side_costs(result, cat, idx)
+    penalty = result.config.side_skip_penalty
+    states = 1 << sides
+    missing = np.array([sides - bin(mask).count("1") for mask in range(states)], dtype=float)
 
-    options = [chunk([sides] * full + [rest]), chunk([rest] + [sides] * full)]
-    c = result.model.cat_index.get(cat.key)
+    best = np.full(states, np.inf)
+    for side in range(sides):        # серия может начаться с любой стороны: что было раньше, неизвестно
+        best[1 << side] = costs[0, side]
+    back: List[Dict[int, Tuple[int, int, bool]]] = []   # состояние → (прошлое, сторона, новый экземпляр)
 
-    def cost(groups):
-        total = 0.0
-        for g in groups:
-            for s, i in enumerate(g):
-                row = result.feature_row.get(i)
-                if row is None or c is None:
-                    continue
-                d = result.side_dist[row, c, s]
-                total += d if np.isfinite(d) else result.cat_dist[row, c]
-        return total
+    for k in range(1, len(idx)):
+        nxt, choice = np.full(states, np.inf), {}
+        for mask in range(states):
+            if not np.isfinite(best[mask]):
+                continue
+            for side in range(sides):
+                bit = 1 << side
+                if not mask & bit:                      # сторона свободна — то же изделие
+                    value = best[mask] + costs[k, side]
+                    if value < nxt[mask | bit]:
+                        nxt[mask | bit] = value
+                        choice[mask | bit] = (mask, side, False)
+                # новое изделие: платим за стороны, которых у предыдущего не оказалось
+                value = best[mask] + costs[k, side] + penalty * missing[mask]
+                if value < nxt[bit]:
+                    nxt[bit] = value
+                    choice[bit] = (mask, side, True)
+        best, back = nxt, back + [choice]
 
-    return min(options, key=cost)
+    mask = int(np.argmin(best))
+    path: List[Tuple[int, bool]] = []                   # (сторона, начинает новое изделие)
+    for k in range(len(idx) - 1, 0, -1):
+        previous, side, is_new = back[k - 1][mask]
+        path.append((side, is_new))
+        mask = previous
+    path.append((mask.bit_length() - 1, True))          # первое фото серии
+    path.reverse()
+
+    groups: List[List[Tuple[int, int]]] = []
+    for i, (side, is_new) in zip(idx, path):
+        if is_new or not groups:
+            groups.append([])
+        groups[-1].append((i, side + 1))
+    return groups
 
 
 def renumber(result: FolderMatch) -> None:
@@ -709,7 +761,7 @@ def renumber(result: FolderMatch) -> None:
             while instance in used.get(cat.key, set()):
                 instance += 1
             next_free[cat.key] = instance + 1
-            for side, i in enumerate(group, start=1):
+            for i, side in group:
                 p = photos[i]
                 p.instance, p.side = instance, side
                 new_name = cat.format_name(instance, side, os.path.splitext(p.filename)[1])
@@ -719,7 +771,8 @@ def renumber(result: FolderMatch) -> None:
             if len(group) != cat.sides:
                 result.warnings.append(
                     "Неполный комплект сторон: %s %d — %d фото из %d (%s)"
-                    % (cat.name, instance, len(group), cat.sides, ", ".join(photos[i].filename for i in group)))
+                    % (cat.name, instance, len(group), cat.sides,
+                       ", ".join(photos[i].filename for i, _ in group)))
 
 
 def set_category(result: FolderMatch, index: int, key: Optional[str]) -> None:

@@ -117,6 +117,7 @@ _MATCH_KEYS = {
     "top_n": _number(1, 10, integer=True),
     "side_fill_max_distance": _number(0, 1.0),
     "side_fill_top_k": _number(1, 10, integer=True),
+    "side_skip_penalty": _number(0, 2.0),
     "weights": _check_weights,
     "weights_with_clip": _check_weights,
     "sequence_weight": _number(0, 3),

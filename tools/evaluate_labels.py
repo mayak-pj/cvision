@@ -72,12 +72,29 @@ def expected_names(reference, filenames, truth):
     return names
 
 
-def score_names(result, expected):
-    """Сравнение итоговых имён (категория + номер экземпляра + сторона)."""
+def _loose(name):
+    """Имя без номера стороны: «Диск 2 фото 3» → «Диск 2».
+
+    Номер стороны в разметке получен делением серии по счёту, а на реальных съёмках стороны
+    снимают в разном порядке (в эталоне встречается и 1,2,3,4, и 3,4,1,2). Поэтому сравнивать
+    номер стороны с такой «истиной» нельзя — сравнивается категория и номер экземпляра.
+    """
+    if name is None:
+        return None
+    return name.rsplit(" фото ", 1)[0] if " фото " in name else name
+
+
+def score_names(result, expected, strict_sides=False):
+    """Сравнение итоговых имён (категория + номер экземпляра + сторона).
+
+    strict_sides=False: номер стороны не сравнивается — см. _loose.
+    """
     counts = Counter()
     wrong = []
     for photo, want in zip(result.photos, expected):
         got = photo.new_name or photo.filename
+        if not strict_sides:
+            got, want = _loose(got), _loose(want)
         if want is None:
             counts["верно" if not photo.new_name else "НЕВЕРНО"] += 1
         elif got == want:

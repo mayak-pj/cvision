@@ -193,8 +193,10 @@ def test_run_of_four_splits_into_two_instances():
 
 
 def test_incomplete_run_alignment_uses_side_distances():
-    # 3 фото памяти подряд: первое больше похоже на сторону 2 (у первого экземпляра нет стороны 1),
-    # значит, неполный экземпляр — первый
+    """Фото получает ту сторону, на которую похоже, а не ту, что выпала по счёту.
+
+    Иначе один лишний или недостающий кадр сдвигал бы стороны у всех следующих деталей.
+    """
     rows = [{"Оперативная память": 0.1}] * 3
     side_rows = {
         (0, "Оперативная память", 1): 0.30, (0, "Оперативная память", 2): 0.10,
@@ -202,8 +204,11 @@ def test_incomplete_run_alignment_uses_side_distances():
         (2, "Оперативная память", 1): 0.30, (2, "Оперативная память", 2): 0.10,
     }
     result = run(rows, side_rows=side_rows)
-    assert [(p.instance, p.side) for p in result.photos] == [(1, 1), (2, 1), (2, 2)]
-    assert any("Оперативная память 1 — 1 фото из 2" in w for w in result.warnings)
+    # первые два фото — один экземпляр: стороны 2 и 1. Порядок сторон внутри экземпляра любой,
+    # на реальных съёмках деталь снимают то с одной стороны, то с другой
+    assert [(p.instance, p.side) for p in result.photos] == [(1, 2), (1, 1), (2, 2)]
+    assert new_names(result)[0] == "Оперативная память 1 фото 2.JPG"
+    assert any("Оперативная память 2 — 1 фото из 2" in w for w in result.warnings)
 
 
 def test_single_side_consecutive_are_separate_instances():
@@ -418,3 +423,47 @@ def test_block_penalty_without_neighbours_is_zero():
     penalty = block_penalty([0, 1, 2], [-1, -1, -1], np.array([4, 4]), weight=0.1, span=3)
     assert penalty.shape == (3, 2)
     assert not penalty.any()
+
+
+THREE_SIDES = ["Съемный накопитель 1 фото 1.jpg", "Съемный накопитель 1 фото 2.jpg",
+               "Съемный накопитель 1 фото 3.jpg", "Кулер.jpg"]
+
+
+def _sides_by_look(order):
+    """Расстояния до сторон: фото k явно похоже на сторону order[k], до остальных — далеко."""
+    rows = [{"Съемный накопитель": 0.10} for _ in order]
+    side_rows = {}
+    for k, side in enumerate(order):
+        for s in (1, 2, 3):
+            side_rows[(k, "Съемный накопитель", s)] = 0.05 if s == side else 0.35
+    return rows, side_rows
+
+
+def test_sides_are_named_by_look_not_by_count():
+    """Деталь снимают в произвольном порядке сторон: сначала корпус, потом две стороны платы.
+
+    Случай заказчика: «фото 3» (корпус) не должно становиться «фото 1» следующего изделия.
+    """
+    rows, side_rows = _sides_by_look([3, 1, 2, 3, 1, 2])
+    result = run(rows, side_rows=side_rows, ref_names=THREE_SIDES)
+    assert new_names(result) == [
+        "Съемный накопитель 1 фото 3.JPG",
+        "Съемный накопитель 1 фото 1.JPG",
+        "Съемный накопитель 1 фото 2.JPG",
+        "Съемный накопитель 2 фото 3.JPG",
+        "Съемный накопитель 2 фото 1.JPG",
+        "Съемный накопитель 2 фото 2.JPG",
+    ]
+    assert result.warnings == []
+
+
+def test_missing_side_does_not_shift_the_following_items():
+    """У второго изделия нет фото одной стороны: сдвинуться должно только оно само."""
+    rows, side_rows = _sides_by_look([3, 1, 2, 3, 2, 3, 1, 2])   # у второго нет стороны 1
+    result = run(rows, side_rows=side_rows, ref_names=THREE_SIDES)
+    assert [(p.instance, p.side) for p in result.photos] == [
+        (1, 3), (1, 1), (1, 2),
+        (2, 3), (2, 2),
+        (3, 3), (3, 1), (3, 2),
+    ]
+    assert any("Съемный накопитель 2 — 2 фото из 3" in w for w in result.warnings)
