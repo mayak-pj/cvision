@@ -100,6 +100,8 @@ class BatchWindow(tk.Toplevel):
         self.status_var = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.status_var, wraplength=700, justify="left").pack(
             side="left", fill="x", expand=True)
+        self.undo_edit_btn = ttk.Button(bottom, text="Отменить правку (Ctrl+Z)", command=self.undo_edit)
+        self.undo_edit_btn.pack(side="left", padx=4)
         self.undo_btn = ttk.Button(bottom, text="Отменить эту папку", command=self.undo_folder, state="disabled")
         self.undo_btn.pack(side="left", padx=4)
         self.skip_btn = ttk.Button(bottom, text="Пропустить папку", command=self.skip_folder)
@@ -118,10 +120,12 @@ class BatchWindow(tk.Toplevel):
         self.tree = ttk.Treeview(table, columns=("new", "confidence", "status"), selectmode="extended",
                                  style="Review.Treeview")
         # по заголовкам столбцов сортируют щелчком: первый щелчок — по возрастанию, второй — наоборот
-        self.sort_column, self.sort_reverse = "order", False
-        for column, title in (("#0", "Фото"), ("new", "Новое имя"),
-                              ("confidence", "Уверенность"), ("status", "Состояние")):
+        # по умолчанию сортируем по новому имени: одинаковые детали оказываются рядом,
+        # и проверять их удобнее, чем в порядке съёмки
+        self.sort_column, self.sort_reverse = "new", False
+        for column, title in self.COLUMN_TITLES:
             self.tree.heading(column, text=title, command=lambda c=column: self.sort_by(c))
+        self._show_sort_marks()
         self.tree.column("new", width=330)
         self.tree.column("confidence", width=100, anchor="e", stretch=False)
         self.tree.column("status", width=170, stretch=False)
@@ -149,9 +153,8 @@ class BatchWindow(tk.Toplevel):
         # Enter — подтвердить предложенное имя и перейти к следующей строке
         self.tree.bind("<Return>", self.confirm_selected)
         self.tree.bind("<KP_Enter>", self.confirm_selected)
-        for sequence in ("<Control-z>", "<Command-z>", "<Control-Z>", "<Command-Z>"):
-            self.tree.bind(sequence, self.undo_edit)
-            self.bind(sequence, self.undo_edit)
+        self._bind_undo(self.tree)
+        self._bind_undo(self)
 
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
@@ -167,7 +170,8 @@ class BatchWindow(tk.Toplevel):
                          hint="Добавить категорию в список").pack(side="right", padx=(0, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self._refresh_categories())
-        ttk.Entry(side, textvariable=self.search_var).pack(fill="x", pady=(2, 4))
+        search_entry = ttk.Entry(side, textvariable=self.search_var)
+        search_entry.pack(fill="x", pady=(2, 4))
         buttons = ttk.Frame(side)
         buttons.pack(side="bottom", fill="x")      # кнопки не должны уезжать за край на низком экране
         ttk.Button(buttons, text="Применить к выбранным", command=self.apply_selected_category).pack(fill="x", pady=2)
@@ -180,6 +184,8 @@ class BatchWindow(tk.Toplevel):
         self.categories_list.pack(side="left", fill="both", expand=True)
         cat_scroll.pack(side="left", fill="y")
         self.categories_list.bind("<Double-Button-1>", lambda e: self.apply_selected_category())
+        for widget in (self.categories_list, search_entry):   # отмена работает, где бы ни был курсор
+            self._bind_undo(widget)
 
     # --- ход обработки ------------------------------------------------------------------
 
@@ -249,6 +255,8 @@ class BatchWindow(tk.Toplevel):
         self.render_rows()
         self.load_thumbnails()
 
+    COLUMN_TITLES = (("#0", "Фото"), ("new", "Новое имя"),
+                     ("confidence", "Уверенность"), ("status", "Состояние"))
     SORT_KEYS = {
         "order": lambda p: (p.index,),
         "#0": lambda p: (natural_key(p.filename), p.index),
@@ -266,8 +274,7 @@ class BatchWindow(tk.Toplevel):
 
     def _show_sort_marks(self) -> None:
         arrow = " ↑" if not self.sort_reverse else " ↓"
-        for column, title in (("#0", "Фото"), ("new", "Новое имя"),
-                              ("confidence", "Уверенность"), ("status", "Состояние")):
+        for column, title in self.COLUMN_TITLES:
             self.tree.heading(column, text=title + (arrow if column == self.sort_column else ""))
 
     def _display_photos(self) -> List:
@@ -386,6 +393,14 @@ class BatchWindow(tk.Toplevel):
         names = [p.filename for p in self.match.photos]
         LargeView(self, self.folder.path, names, indexes[0], self.cache)
         return "break"
+
+    # «<<Undo>>» — обязательно: на macOS Cmd+Z перехватывает стандартное меню «Правка»,
+    # и обычная привязка к сочетанию клавиш до окна не доходит.
+    UNDO_SEQUENCES = ("<Control-z>", "<Command-z>", "<Control-Z>", "<Command-Z>", "<<Undo>>")
+
+    def _bind_undo(self, widget) -> None:
+        for sequence in self.UNDO_SEQUENCES:
+            widget.bind(sequence, self.undo_edit)
 
     _ABSENT = object()                       # признак «ручной правки для этого фото не было»
 
@@ -536,7 +551,7 @@ class BatchWindow(tk.Toplevel):
                 text = "%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence)
                 ttk.Button(self.candidates_frame, text=text,
                            command=lambda c=candidate.category: self.apply_category(c)).pack(fill="x", pady=1)
-        ttk.Button(self.candidates_frame, text="3 — не переименовывать",
+        ttk.Button(self.candidates_frame, text="3 — Не переименовывать",
                    command=self.exclude_selected).pack(fill="x", pady=(4, 1))
 
     def _all_categories(self) -> List[str]:

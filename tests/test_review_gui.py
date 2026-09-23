@@ -238,7 +238,9 @@ def test_sorting_by_column_headers(batch):
     """Сортировка щелчком по заголовку: первый щелчок — по возрастанию, второй — наоборот."""
     win, _ = batch
     order = [p.filename for p in win.match.photos]
-    assert [r[0] for r in rows(win)] == order          # по умолчанию — порядок съёмки
+    # по умолчанию — по новому имени: одинаковые детали оказываются рядом
+    assert "↑" in win.tree.heading("new", "text")
+    assert [r[1] for r in rows(win)] == sorted(r[1] for r in rows(win))
 
     win.sort_by("#0")
     by_name = [r[0] for r in rows(win)]
@@ -272,7 +274,7 @@ def test_only_two_candidates_are_numbered(batch):
     select_row(win, 0)
     texts = [w.cget("text") for w in win.candidates_frame.winfo_children() if w.cget("text")]
     numbered = [t for t in texts if t.startswith(("1 —", "2 —", "3 —"))]
-    assert numbered[-1] == "3 — не переименовывать"
+    assert numbered[-1] == "3 — Не переименовывать"
     assert len([t for t in texts if "%" in t]) <= 2
 
 
@@ -490,3 +492,23 @@ def test_ctrl_z_without_edits_says_so(batch):
     win, _ = batch
     win.undo_edit()
     assert "Отменять нечего" in win.status_var.get()
+
+
+def test_undo_is_reachable_from_every_widget_and_by_button(batch):
+    """Отмена должна работать, где бы ни был курсор, и кнопкой — на macOS Cmd+Z перехватывает
+    системное меню «Правка», поэтому одной привязки к сочетанию мало."""
+    win, _ = batch
+    for widget in (win.tree, win, win.categories_list):
+        bound = widget.bind()
+        assert any("Key-z" in sequence for sequence in bound), widget
+        assert "<<Undo>>" in bound, widget
+    assert win.undo_edit_btn.cget("text").startswith("Отменить правку")
+
+    win.sort_by("#0")
+    filename = win.tree.item(win.tree.get_children()[0], "text").strip()
+    win.tree.selection_set(iid_of(win, filename))
+    before = row_of(win, filename)
+    win.apply_candidate(1)
+    assert row_of(win, filename) != before
+    win.undo_edit_btn.invoke()                      # нажатие кнопки, а не клавиш
+    assert row_of(win, filename) == before
