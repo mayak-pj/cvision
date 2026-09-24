@@ -37,6 +37,23 @@ def check(title, function):
         print("[ ок   ] %-34s %s" % (title, result if result is not None else ""))
 
 
+def own_python():
+    """Проверка запущена встроенным Python дистрибутива, а не каким-то другим.
+
+    Частая ошибка: берут отдельно скачанный embeddable Python, в котором нет ни библиотек,
+    ни tkinter, и получают непонятное «No module named numpy».
+    """
+    bundled = HERE / "python" / ("python.exe" if os.name == "nt" else "python")
+    if not bundled.exists():
+        return "рядом нет папки python — проверка идёт тем Python, которым запущена"
+    if Path(sys.executable).resolve() != bundled.resolve():
+        raise RuntimeError('запустите проверку встроенным Python дистрибутива:\n'
+                           '            "%s" "%s"\n'
+                           '            сейчас она запущена из %s' % (bundled, HERE / "check_install.py",
+                                                                      sys.executable))
+    return "встроенный Python дистрибутива"
+
+
 def windows_version():
     if os.name != "nt":
         notes.append("Проверка запущена не на Windows: часть проверок ничего не докажет.")
@@ -164,6 +181,7 @@ def main():
         except (AttributeError, ValueError, OSError):
             pass
     print("Проверка портативной сборки\n" + "-" * 62)
+    check("Чем запущена проверка", own_python)
     check("Windows", windows_version)
     check("Python", python_version)
     check("Библиотеки", libraries)

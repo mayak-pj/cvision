@@ -89,3 +89,24 @@ jobs:
           name: photo-renamer-windows7-portable
           path: dist
           retention-days: 30
+          # ОБЯЗАТЕЛЬНО: иначе выгрузка молча выбрасывает скрытые папки, а numpy держит
+          # свою математическую библиотеку в «numpy/.libs» — без неё numpy не загружается
+          include-hidden-files: true
+
+  check-artifact:
+    name: Проверка скачанного артефакта
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - name: Скачать артефакт так же, как это делает человек
+        uses: actions/download-artifact@v4
+        with:
+          name: photo-renamer-windows7-portable
+          path: downloaded
+
+      - name: Запустить проверку из скачанного дистрибутива
+        shell: pwsh
+        run: |
+          $python = "downloaded/Переименование фото/python/python.exe"
+          & $python "downloaded/Переименование фото/check_install.py"
+          if ($LASTEXITCODE -ne 0) { throw "скачанный дистрибутив не прошёл проверку" }
