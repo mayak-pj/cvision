@@ -58,6 +58,12 @@ rem Запуск программы. Консоль не нужна: pythonw.exe
 set HERE=%~dp0
 start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" %*
 """
+CHECK_LAUNCHER = """@echo off
+rem Проверка сборки. Запускать нужно именно встроенным Python: в чужом нет ни библиотек, ни tkinter.
+set HERE=%~dp0
+"%HERE%python\\python.exe" "%HERE%check_install.py"
+pause
+"""
 CONSOLE_LAUNCHER = """@echo off
 rem То же самое, но с окном консоли: видно сообщения об ошибках.
 set HERE=%~dp0
@@ -260,6 +266,8 @@ def copy_project(project: Path, out: Path) -> None:
 def write_launchers(out: Path) -> None:
     (out / "Переименование фото.bat").write_text(LAUNCHER, encoding="cp866")
     (out / "Запуск с консолью (для ошибок).bat").write_text(CONSOLE_LAUNCHER, encoding="cp866")
+    # отдельный ярлык для проверки: иначе её запускают чужим Python и получают «No module named numpy»
+    (out / "Проверка сборки.bat").write_text(CHECK_LAUNCHER, encoding="cp866")
 
 
 def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path,

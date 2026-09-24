@@ -89,6 +89,10 @@ def test_build_creates_distribution(tmp_path, parts):
     assert (site_packages / "PIL" / "__init__.py").exists()
     assert (site_packages / "scipy" / "__init__.py").exists()
 
+    # проверку запускают ярлыком: иначе её запускают чужим Python и получают «No module named numpy»
+    check = (out / "Проверка сборки.bat").read_text(encoding="cp866")
+    assert "python\\python.exe" in check and "check_install.py" in check
+
     # раскладка как в обычной установке Python: DLLs\ рядом с tcl\ — тогда Tcl находит файлы сам
     assert (python_dir / "DLLs" / "_tkinter.pyd").exists()
     assert (python_dir / "DLLs" / "tcl86t.dll").exists()
