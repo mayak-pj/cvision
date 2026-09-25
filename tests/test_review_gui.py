@@ -574,3 +574,19 @@ def test_new_folder_starts_from_the_first_row(batch):
     win.skip_folder()
     assert win.tree.selection() and win.tree.selection()[0] == win.tree.get_children()[0]
     assert win.tree.yview()[0] == 0.0                       # и прокрутка в начале списка
+
+
+def test_own_category_on_several_photos_becomes_sides(batch):
+    """Своя категория, назначенная сразу нескольким фото, — это ракурсы одной детали.
+
+    Замечание с рабочей машины: два выделенных фото получали имена «Стойка многопозиционная»
+    и «Стойка многопозиционная 2», то есть считались разными деталями.
+    """
+    win, _ = batch
+    names = ["IMG_0002.JPG", "IMG_0003.JPG"]     # соседние кадры: одна деталь с двух сторон
+    win.tree.selection_set(*[iid_of(win, name) for name in names])
+    win._on_row_select()
+    win.apply_category("Стойка многопозиционная")
+    assigned = sorted(row_of(win, name)[0] for name in names)
+    assert assigned == ["Стойка многопозиционная фото 1.JPG", "Стойка многопозиционная фото 2.JPG"]
+    assert win.names.sides_for("Стойка многопозиционная") == 2

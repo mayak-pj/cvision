@@ -687,14 +687,31 @@ class BatchWindow(tk.Toplevel):
             return
         key = None
         if category is not None:
-            key = (matcher.add_category(self.match, category, self.names.sides_for(category))
-                   if category not in self.reference_categories else category_key(category))
+            key = self._category_key(category, len(indexes))
         position = self._selected_position()
         self._remember(indexes)
         for index in indexes:
             matcher.set_category(self.match, index, key)
         self.render_rows()
         self._select_position(None if position is None else position + 1)
+
+    def _category_key(self, category: str, photos: int) -> str:
+        """Ключ категории для раскладки. Заодно решает вопрос с ракурсами у своих категорий.
+
+        Категорию, которой нет в эталоне, назначают сразу нескольким выделенным фото — значит,
+        это ракурсы одной детали, а не разные детали: «Стойка многопозиционная фото 1» и
+        «фото 2», а не «Стойка многопозиционная» и «Стойка многопозиционная 2» (замечание с
+        рабочей машины). Число ракурсов запоминается в списке категорий. Состав эталона так
+        не меняется: там ракурсы видно по самому образцу.
+        """
+        if category in self.reference_categories:
+            return category_key(category)
+        sides = max(self.names.sides_for(category), photos)
+        key = matcher.add_category(self.match, category, sides)
+        if matcher.set_sides(self.match, key, sides) or sides > self.names.sides_for(category):
+            self.names.remember_sides(category, sides)
+            self.names.save()
+        return key
 
     def exclude_selected(self) -> None:
         self.apply_category(None)

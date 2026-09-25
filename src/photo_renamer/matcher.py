@@ -22,7 +22,7 @@
 
 import os
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _replace
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
@@ -875,6 +875,18 @@ def add_category(result: FolderMatch, name: str, sides: int = 1) -> str:
     result.extra_categories[key] = Category(name=name.strip(), numbered=False, has_side_suffix=sides > 1,
                                             sides=max(1, int(sides)), instances=0)
     return key
+
+
+def set_sides(result: FolderMatch, key: str, sides: int) -> bool:
+    """Задаёт число ракурсов у категории, добавленной вручную. Возвращает True, если изменилось.
+
+    Состав эталона не трогается: там число ракурсов видно по самому образцу.
+    """
+    category = result.extra_categories.get(key)
+    if category is None or sides <= category.sides:
+        return False
+    result.extra_categories[key] = _replace(category, sides=int(sides), has_side_suffix=sides > 1)
+    return True
 
 
 def set_category(result: FolderMatch, index: int, key: Optional[str]) -> None:
