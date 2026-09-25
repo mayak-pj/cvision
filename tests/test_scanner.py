@@ -252,3 +252,38 @@ def test_exif_order_differs_flag(tmp_path):
     same = {"a.jpg": "2024:05:01 10:00:10", "b.jpg": "2024:05:01 10:00:20", "c.jpg": "2024:05:01 10:00:30"}
     scan = list_photos(str(folder), sort=SORT_BY_EXIF, date_source=lambda p: same[os.path.basename(p)])
     assert scan.photos == ["a.jpg", "b.jpg", "c.jpg"] and not scan.order_differs
+
+
+def test_huge_photo_does_not_break_the_scan(tmp_path):
+    """Фото на сотни миллионов пикселей не должно обрушивать анализ проекта.
+
+    Случай с рабочей машины: «Image size (244941840 pixels) exceeds limit … decompression
+    bomb DOS attack». Pillow возбуждает DecompressionBombError, который не наследуется
+    от OSError, и раньше он проходил мимо всех перехватов.
+    """
+    from PIL import Image
+
+    photo = tmp_path / "огромное фото.jpg"
+    Image.new("RGB", (64, 48), (120, 130, 140)).save(photo, "JPEG")
+
+    limit = Image.MAX_IMAGE_PIXELS
+    try:
+        Image.MAX_IMAGE_PIXELS = 10          # как будто файл больше порога
+        assert scanner.read_exif_datetime(str(photo)) is None      # не падаем, просто нет даты
+        assert scanner.list_photos(str(tmp_path), date_source=scanner.read_exif_datetime).photos == \
+            ["огромное фото.jpg"]
+    finally:
+        Image.MAX_IMAGE_PIXELS = limit
+
+
+def test_large_images_are_allowed():
+    """Порог Pillow поднят: свои же большие снимки должны открываться, а не считаться атакой."""
+    from PIL import Image
+
+    limit = Image.MAX_IMAGE_PIXELS
+    try:
+        Image.MAX_IMAGE_PIXELS = 1000
+        scanner.allow_large_images()
+        assert Image.MAX_IMAGE_PIXELS == scanner.LARGE_IMAGE_LIMIT
+    finally:
+        Image.MAX_IMAGE_PIXELS = limit

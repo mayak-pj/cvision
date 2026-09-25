@@ -29,7 +29,9 @@ import numpy as np
 from PIL import Image, ImageOps
 from scipy.fft import dct
 
-from .scanner import io_path
+from .scanner import allow_large_images, io_path
+
+allow_large_images()    # очень большие фотографии Pillow иначе открывать отказывается
 
 PHASH = "phash"
 HIST = "hist"

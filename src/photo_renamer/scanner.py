@@ -99,6 +99,25 @@ def _same_path_key(path: str) -> str:
     return os.path.normcase(os.path.normpath(os.path.abspath(path)))
 
 
+# Снимки заказчика бывают огромными: на рабочей машине встретился файл на 245 млн пикселей.
+# Pillow по умолчанию отказывается открывать такие файлы («decompression bomb»), потому что
+# защищается от вредоносных картинок из интернета. Здесь обрабатываются свои же фотографии,
+# поэтому порог поднимаем: декодирование всё равно идёт в уменьшенном масштабе (draft),
+# и память на такой файл не расходуется.
+LARGE_IMAGE_LIMIT = 500_000_000
+
+
+def allow_large_images() -> None:
+    """Разрешает Pillow открывать очень большие фотографии и не предупреждать о них."""
+    import warnings
+
+    from PIL import Image
+
+    if Image.MAX_IMAGE_PIXELS is not None and Image.MAX_IMAGE_PIXELS < LARGE_IMAGE_LIMIT:
+        Image.MAX_IMAGE_PIXELS = LARGE_IMAGE_LIMIT
+    warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
+
+
 def read_exif_datetime(path: str) -> Optional[str]:
     """Дата съёмки DateTimeOriginal ('YYYY:MM:DD HH:MM:SS') или None.
 
@@ -106,11 +125,14 @@ def read_exif_datetime(path: str) -> Optional[str]:
     """
     from PIL import Image
 
+    allow_large_images()
     try:
         with Image.open(io_path(path)) as img:
             exif = img.getexif()
             value = exif.get_ifd(_EXIF_IFD).get(_EXIF_DATETIME_ORIGINAL)
-    except (OSError, ValueError, SyntaxError):
+    # DecompressionBombError не наследуется от OSError, и без него одна огромная фотография
+    # обрушивала весь анализ проекта: «Image size … exceeds limit … decompression bomb DOS attack»
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
         return None
     if isinstance(value, bytes):
         value = value.decode("ascii", "ignore")
