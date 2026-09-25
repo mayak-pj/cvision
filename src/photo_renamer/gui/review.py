@@ -65,6 +65,7 @@ class BatchWindow(tk.Toplevel):
         self.match: Optional[matcher.FolderMatch] = None
         self.folder: Optional[grouping.FolderInfo] = None
         self.categories: List[str] = []
+        self.reports: List[str] = []         # отчёты по папкам: показываются одним окном в конце
         self._photos: Dict[str, tk.PhotoImage] = {}
         self._row_index: Dict[str, int] = {}
         self.thumb_size = int(getattr(app_config, "review_thumb", 96))
@@ -107,7 +108,8 @@ class BatchWindow(tk.Toplevel):
         # кнопки упаковываются первыми и справа налево: тогда каждая получает свою ширину
         # и одинаковый зазор, а строка состояния занимает остаток и переносится по словам
         self.undo_edit_btn = ttk.Button(bottom, text="Отменить правку (Ctrl+Z)", command=self.undo_edit)
-        self.undo_btn = ttk.Button(bottom, text="Отменить эту папку", command=self.undo_folder, state="disabled")
+        self.undo_btn = ttk.Button(bottom, text="Отменить переименование", command=self.undo_folder,
+                                   state="disabled")
         self.skip_btn = ttk.Button(bottom, text="Пропустить папку", command=self.skip_folder)
         self.apply_btn = ttk.Button(bottom, text="Переименовать папку", command=self.apply_folder)
         self.close_btn = ttk.Button(bottom, text="Закрыть", command=self.close)
@@ -241,8 +243,8 @@ class BatchWindow(tk.Toplevel):
         self.next_folder()
 
     def next_folder(self) -> None:
-        self._last_plan = None
-        self.undo_btn.configure(state="disabled")
+        # Отмена последнего переименования остаётся доступной и после перехода к следующей папке:
+        # отчёт по папке больше не показывается, и это единственная возможность передумать.
         if not self.queue:
             self.finish()
             return
@@ -755,19 +757,26 @@ class BatchWindow(tk.Toplevel):
         self.status_var.set("Переименовано: %d, пропущено: %d, ошибок: %d"
                             % (plan.count(oplog.RESULT_OK), plan.count(oplog.RESULT_SKIPPED),
                                plan.count(oplog.RESULT_ERROR)))
-        ReportDialog(self, text, on_next=self.next_folder)
+        # Отчёт по каждой папке не показывается: он копится и выдаётся один раз в конце,
+        # иначе после каждой папки приходится закрывать окно (замечание с рабочей машины).
+        self.reports.append(text)
+        self.next_folder()
 
     def undo_folder(self) -> None:
         if self._last_plan is None:
             return
         done = [item for item in self._last_plan.items if item.result == oplog.RESULT_OK]
-        plan = renamer.RenamePlan(self._last_plan.folder,
+        folder = self._last_plan.folder
+        plan = renamer.RenamePlan(folder,
                                   [renamer.RenameItem(i.new, i.old, i.category, None, "отмена") for i in
                                    reversed(done)])
         renamer.apply_plan(plan, self.log)
         self._last_plan = None
+        if self.reports:
+            self.reports.pop()
         self.undo_btn.configure(state="disabled")
-        self.status_var.set("Переименование папки отменено: %d файл(ов)" % plan.count(oplog.RESULT_OK))
+        self.status_var.set("Переименование папки «%s» отменено: %d файл(ов)"
+                            % (os.path.basename(os.path.normpath(folder)), plan.count(oplog.RESULT_OK)))
 
     def skip_folder(self) -> None:
         if self.folder is not None:
@@ -781,8 +790,12 @@ class BatchWindow(tk.Toplevel):
         self.apply_btn.configure(state="disabled")
         self.skip_btn.configure(state="disabled")
         self.tree.delete(*self.tree.get_children())
-        messagebox.showinfo(TITLE, "Группа обработана.\n\nЛог: %s\nОтчёт: %s"
-                            % (self.log.csv_path, self.log.txt_path), parent=self)
+        header = ("Группа обработана. Переименовано папок: %d.\n\nЛог: %s\nОтчёт: %s\n"
+                  % (len(self.reports), self.log.csv_path, self.log.txt_path))
+        if self.reports:
+            ReportDialog(self, header + "\n" + "\n".join(self.reports), title="Отчёт по группе")
+        else:
+            messagebox.showinfo(TITLE, header, parent=self)
 
     def close(self) -> None:
         if self._busy:
@@ -800,12 +813,12 @@ class BatchWindow(tk.Toplevel):
 
 
 class ReportDialog(tk.Toplevel):
-    """Отчёт по папке после переименования."""
+    """Отчёт по работе. Показывается один раз, когда группа обработана."""
 
-    def __init__(self, master, text: str, on_next=None):
+    def __init__(self, master, text: str, on_next=None, title: str = "Отчёт по папке"):
         super().__init__(master)
         self.on_next = on_next
-        self.title("Отчёт по папке")
+        self.title(title)
         self.geometry("900x560")
         frame = ttk.Frame(self, padding=10)
         frame.pack(fill="both", expand=True)
@@ -818,8 +831,11 @@ class ReportDialog(tk.Toplevel):
         scroll.pack(side="left", fill="y")
         buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
         buttons.pack(fill="x")
-        ttk.Button(buttons, text="Остаться в папке", command=self.destroy).pack(side="left")
-        ttk.Button(buttons, text="Следующая папка", command=self.go_next).pack(side="right")
+        if self.on_next is None:
+            ttk.Button(buttons, text="Закрыть", command=self.destroy).pack(side="right")
+        else:
+            ttk.Button(buttons, text="Остаться в папке", command=self.destroy).pack(side="left")
+            ttk.Button(buttons, text="Следующая папка", command=self.go_next).pack(side="right")
         self.transient(master)
         self.focus_set()
 

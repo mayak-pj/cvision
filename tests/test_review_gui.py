@@ -115,7 +115,8 @@ def test_apply_and_undo(batch):
     after = sorted(os.listdir(str(folder)))
     assert after != before
     assert any(name.startswith("Кулер") or name.startswith("Процессор") for name in after)
-    assert "Переименовано:" in win.status_var.get()
+    # отчёт по папке не показывается, работа сразу переходит дальше, но отмена остаётся
+    assert len(win.reports) == 1 and "Обработано папок: 1" in win.status_var.get()
     assert str(win.undo_btn["state"]) == "normal"
 
     win.undo_folder()
@@ -590,3 +591,14 @@ def test_own_category_on_several_photos_becomes_sides(batch):
     assigned = sorted(row_of(win, name)[0] for name in names)
     assert assigned == ["Стойка многопозиционная фото 1.JPG", "Стойка многопозиционная фото 2.JPG"]
     assert win.names.sides_for("Стойка многопозиционная") == 2
+
+
+def test_report_is_shown_once_at_the_end(batch, monkeypatch):
+    """Отчёт по каждой папке не нужен: он копится и показывается один раз в конце группы."""
+    win, _ = batch
+    shown = []
+    monkeypatch.setattr(review_mod, "ReportDialog",
+                        lambda master, text, **kw: shown.append((text, kw.get("title"))))
+    win.apply_folder()
+    assert len(shown) == 1 and shown[0][1] == "Отчёт по группе"
+    assert "Группа обработана" in shown[0][0] and "Папка:" in shown[0][0]
