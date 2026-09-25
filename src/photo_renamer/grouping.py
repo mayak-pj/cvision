@@ -10,6 +10,7 @@
    иначе папка с наибольшим числом фото.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence
 
@@ -68,9 +69,19 @@ class ProjectAnalysis:
     errors: List[ScanError] = field(default_factory=list)
 
 
+def _vocabulary_key(category: str) -> str:
+    """Ключ категории без цифр: «Деталь 1» и «Деталь 2» — одна категория, а не две.
+
+    Так общая нумерация кадров («File 1», «File 2», «Снимок 3») не выглядит набором разных
+    категорий: иначе папка с неназванными фото считается уже переименованной.
+    """
+    return re.sub(r"\d+", "", category_key(category)).strip()
+
+
 def folder_info(scan: FolderScan) -> FolderInfo:
     named = [name for name in scan.photos if is_template_name(name)]
-    categories = {category_key(parse_name(name).category) for name in named}
+    categories = {_vocabulary_key(parse_name(name).category) for name in named}
+    categories.discard("")
     return FolderInfo(scan, len(named) / max(len(scan.photos), 1), len(categories))
 
 

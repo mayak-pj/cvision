@@ -171,6 +171,10 @@ def test_camera_names(name):
     ("Процессор  1 фото 2.jpg", False),   # двойной пробел — не каноническая запись
     ("12.jpg", False),
     ("IMG_BB_043972.JPG", False),
+    ("file (1).jpg", False),              # служебные имена: скобок и подчёркиваний программа не пишет
+    ("file (17).JPG", False),
+    ("Снимок_3.jpg", False),
+    ("Кулер [2].jpg", False),
 ])
 def test_template_names(name, expected):
     from photo_renamer.reference import is_template_name

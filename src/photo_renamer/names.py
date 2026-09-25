@@ -19,6 +19,8 @@ import os
 import unicodedata
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from .reference import looks_like_category
+
 DEFAULT_SIDES = 1
 SEPARATOR = "|"
 
@@ -140,9 +142,15 @@ class NamesList:
         self.add(name, sides)
 
     def learn_from(self, categories: Iterable[Tuple[str, int]]) -> None:
-        """Добавляет категории из эталона проекта (имя, число сторон)."""
+        """Добавляет категории из эталона проекта (имя, число сторон).
+
+        Имена, непохожие на название комплектующего, пропускаются: список категорий заполняется
+        здесь без участия человека, и мусор из неназванных кадров в него попадать не должен.
+        Введённое руками имя (add) не проверяется — там человек знает, что пишет.
+        """
         for name, sides in categories:
-            self.add(name, sides)
+            if looks_like_category(name):
+                self.add(name, sides)
 
     # --- поиск --------------------------------------------------------------------
 

@@ -30,6 +30,11 @@ _NAME_RE = re.compile(
 # признак того, что файл не переименован.
 _CAMERA_NAME_RE = re.compile(r"^(dsc|dscn|dcim|img|pxl|p\d|photo|image|wp)([_\-\s]*[a-z]{1,4})?[_\-\s]*\d",
                              re.IGNORECASE)
+# Знаки, которых в имени по шаблону быть не может: программа их не пишет, а в категориях их не
+# набирают. Зато ими полны служебные имена — «file (1)», «Снимок_3», «photo[2]». Без этой проверки
+# такое имя считалось названным по шаблону: категория «file (1)», и папка с 17 такими файлами
+# выглядела как уже переименованная (замечено на рабочей машине, см. docs/decisions.md).
+_JUNK_CHARS = set("()[]{}<>_|\\/*?\"`~!@#$%^&=+")
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,8 @@ def is_template_name(filename: str) -> bool:
     if is_camera_name(filename):
         return False
     stem = unicodedata.normalize("NFC", os.path.splitext(filename)[0])
+    if _JUNK_CHARS & set(stem):
+        return False
     parsed = parse_name(filename)
     if not re.search(r"[^\W\d_]{2}", parsed.category):  # в категории должно быть слово
         return False
@@ -63,6 +70,16 @@ def is_template_name(filename: str) -> bool:
     if parsed.side is not None:
         parts.append("%s %d" % (parsed.side_word, parsed.side))
     return " ".join(parts) == stem
+
+
+def looks_like_category(category: str) -> bool:
+    """Годится ли строка в название категории: есть слово и нет служебных знаков.
+
+    Нужно там, где категории берутся из имён файлов автоматически: «file (1)» — это не название
+    комплектующего, а неназванный кадр, и в списке категорий ему не место.
+    """
+    category = normalize_text(category)
+    return bool(re.search(r"[^\W\d_]{2}", category)) and not (_JUNK_CHARS & set(category))
 
 
 def category_key(category: str) -> str:

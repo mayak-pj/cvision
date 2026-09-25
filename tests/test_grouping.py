@@ -78,6 +78,29 @@ def test_generic_numbering_is_not_a_reference():
     assert real.is_reference
 
 
+def test_service_names_are_not_a_reference():
+    """Случай с рабочей машины: папка из файлов «file (1)»…«file (17)» не переименована.
+
+    Раньше каждое такое имя считалось названным по шаблону, причём с собственной категорией,
+    поэтому папка получала статус «уже названа по шаблону» и выпадала из списка на переименование
+    («В этой группе нет папок для переименования»).
+    """
+    from photo_renamer.scanner import FolderScan
+
+    info = grouping.folder_info(FolderScan("/x", ["file (%d).JPG" % i for i in range(1, 18)]))
+    assert info.named_share == 0.0 and info.categories == 0 and not info.is_reference
+
+
+def test_folder_with_service_names_stays_a_target(tmp_path):
+    """И такая папка остаётся целью переименования рядом с готовым эталоном."""
+    shoot(tmp_path / "эталон", [1, 2, 3], names=["Кулер.JPG", "Процессор 1 фото 1.JPG", "Кабель HDMI.JPG"])
+    shoot(tmp_path / "SN2", [1, 2, 3], names=["file (1).JPG", "file (2).JPG", "file (3).JPG"])
+    analysis = grouping.analyze_project([str(tmp_path)], FeatureExtractor(), W)
+    group = analysis.groups[0]
+    assert group.reference_is_ready and os.path.basename(group.reference.path) == "эталон"
+    assert [os.path.basename(f.path) for f in group.targets] == ["SN2"]
+
+
 def _fake_analysis(tmp_path):
     """Анализ без фото: три папки, две группы, заданная матрица несходства."""
     from photo_renamer.scanner import FolderScan
