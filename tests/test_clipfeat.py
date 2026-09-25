@@ -84,3 +84,16 @@ def test_download_tool_uses_the_same_file_name():
         text = f.read()
     found = re.search(r'^MODEL_FILE = "([^"]+)"', text, re.M)
     assert found and found.group(1) == clipfeat.MODEL_FILE
+
+
+def test_windows_version_warning_is_not_an_error():
+    """На Windows 7 onnxruntime предупреждает о версии системы и о мосте к сменным
+    исполнителям, но считает как надо. Эти сообщения не должны выглядеть ошибкой."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        clipfeat._quiet_onnxruntime()
+        warnings.warn("Unsupported Windows version (7). ONNX Runtime supports Windows 10 and above, only.")
+    assert not [w for w in caught if "Unsupported Windows version" in str(w.message)]
+    assert clipfeat.runtime_error() is None or "onnxruntime" in clipfeat.runtime_error().lower()

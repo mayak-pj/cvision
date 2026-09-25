@@ -34,6 +34,30 @@ def default_path(base_dir: str) -> str:
     return os.path.join(base_dir, "model", MODEL_FILE)
 
 
+def _quiet_onnxruntime() -> None:
+    """Убирает шум onnxruntime, который на Windows 7 пугает, но ни на что не влияет.
+
+    На семёрке onnxruntime печатает два сообщения и продолжает работать:
+    - «Unsupported Windows version (7). ONNX Runtime supports Windows 10 and above, only»
+      — предупреждение о неподдерживаемой версии системы;
+    - «LoadLibrary failed with error 126 … onnxruntime_providers_shared.dll … Init provider
+      bridge failed» — не загрузился мост к сменным исполнителям (GPU, DirectML и прочие),
+      которых в нашей сборке и нет: вычисления идут встроенным исполнителем на процессоре.
+
+    Проверено на рабочей машине заказчика: при обоих сообщениях модель считает 32 мс на фото.
+    Поэтому сообщения приглушаются, а не выдаются за ошибку.
+    """
+    import warnings
+
+    warnings.filterwarnings("ignore", message=".*Unsupported Windows version.*")
+    try:
+        import onnxruntime as ort
+
+        ort.set_default_logger_severity(3)      # 3 — только ошибки, без предупреждений
+    except Exception:
+        pass
+
+
 def runtime_error() -> Optional[str]:
     """Текст ошибки импорта onnxruntime или None, если всё хорошо.
 
@@ -41,10 +65,15 @@ def runtime_error() -> Optional[str]:
     а нехватку библиотек Visual C++ рядом с python.exe (msvcp140.dll и vcruntime140_1.dll),
     которых нет во встраиваемом Python.
     """
+    import warnings
+
     try:
-        import onnxruntime  # noqa: F401
+        with warnings.catch_warnings():         # предупреждение о версии Windows — не ошибка
+            warnings.filterwarnings("ignore", message=".*Unsupported Windows version.*")
+            import onnxruntime  # noqa: F401
     except Exception as exc:
         return "%s: %s" % (type(exc).__name__, exc)
+    _quiet_onnxruntime()
     return None
 
 
