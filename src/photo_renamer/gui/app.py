@@ -74,6 +74,7 @@ class MainWindow(tk.Tk):
         self.worker = Worker(self)
 
         theme.apply(self, app_config.theme)
+        theme.install_clipboard_keys(self)
         self.palette = theme.colors()
         self.title(TITLE)
         self.geometry("1150x650")

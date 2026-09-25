@@ -96,3 +96,25 @@ def test_table_heading_stays_readable_under_mouse(root):
         assert style.lookup("Treeview.Heading", "background", ["active"]) == palette["button_active"]
         assert style.lookup("Treeview.Heading", "foreground", ["active"]) == palette["text"]
         assert style.lookup("Treeview.Heading", "foreground", ["pressed"]) == palette["select_fg"]
+
+
+def test_clipboard_keys_work_in_any_layout(root):
+    """Ctrl+V при русской раскладке: Tk видит «Ctrl+М», поэтому разбираем код клавиши.
+
+    Замечание с рабочей машины: «Нельзя вставить ctrl+v в окно категории и в окно добавить».
+    """
+    assert theme.clipboard_action(86, 0x0004) == "<<Paste>>"       # V
+    assert theme.clipboard_action(67, 0x0004) == "<<Copy>>"        # C
+    assert theme.clipboard_action(88, 0x0004) == "<<Cut>>"         # X
+    assert theme.clipboard_action(90, 0x0004) == "<<Undo>>"        # Z
+    assert theme.clipboard_action(65, 0x0004) == "select-all"      # A
+    assert theme.clipboard_action(86, 0) == ""                     # без Ctrl — обычный ввод
+    assert theme.clipboard_action(86, 0x0004 | 0x20000) == ""      # Ctrl+Alt (AltGr) — не сочетание
+    assert theme.clipboard_action(70, 0x0004) == ""                # Ctrl+F к буферу не относится
+
+
+def test_clipboard_keys_are_installed_for_entry_classes(root):
+    """Привязка ставится на классы полей ввода, а не на каждое поле по отдельности."""
+    theme.install_clipboard_keys(root)
+    for name in ("Entry", "TEntry", "Text"):
+        assert root.bind_class(name, "<Control-KeyPress>")

@@ -130,6 +130,47 @@ def apply(root: tk.Misc, mode: str = "light") -> None:
         pass
 
 
+# Коды клавиш (Windows): при русской раскладке Tk не узнаёт Ctrl+C/V/X/A/Z, потому что событие
+# приходит с кириллическим символом — «Ctrl+М» вместо «Ctrl+V». Код клавиши от раскладки не
+# зависит, поэтому разбираем сочетание по нему. С латинской раскладкой эта привязка не мешает:
+# у Tk для «<Control-v>» есть своя, более точная, и срабатывает она.
+_CLIPBOARD_KEYCODES = {67: "<<Copy>>", 86: "<<Paste>>", 88: "<<Cut>>", 90: "<<Undo>>", 65: "select-all"}
+_CLIPBOARD_CLASSES = ("Entry", "TEntry", "Text", "TCombobox", "Spinbox", "TSpinbox")
+
+
+def clipboard_action(keycode: int, state: int) -> str:
+    """Что делать по нажатию: имя виртуального события, «select-all» или пустая строка.
+
+    state — маска модификаторов события: нужен Ctrl (0x0004) и не нужен Alt (0x20000,
+    иначе AltGr на некоторых раскладках выглядит как Ctrl+Alt).
+    """
+    if not state & 0x0004 or state & 0x20000:
+        return ""
+    return _CLIPBOARD_KEYCODES.get(keycode, "")
+
+
+def _clipboard_key(event):
+    action = clipboard_action(getattr(event, "keycode", 0), getattr(event, "state", 0))
+    if not action:
+        return None
+    widget = event.widget
+    if action == "select-all":
+        try:
+            widget.selection_range(0, "end")
+            widget.icursor("end")
+        except (tk.TclError, AttributeError):   # в многострочном поле выделения «от и до» нет
+            return None
+        return "break"
+    widget.event_generate(action)
+    return "break"
+
+
+def install_clipboard_keys(root: tk.Misc) -> None:
+    """Включает Ctrl+C/V/X/A/Z в полях ввода при любой раскладке клавиатуры."""
+    for name in _CLIPBOARD_CLASSES:
+        root.bind_class(name, "<Control-KeyPress>", _clipboard_key)
+
+
 def apply_to_existing(widget: tk.Misc, mode: str = None) -> None:
     """Перекрашивает уже созданные окна и обычные виджеты (ttk перекрашивается сам,
     а список, холст, текст и меню цвета темы не наследуют)."""
