@@ -23,6 +23,11 @@ from .review import BatchWindow
 
 TITLE = "Переименование фото комплектующих"
 
+# Отметки в таблице пишутся словами: значки вроде «✔» на Windows 7 в tkinter выводятся не всюду.
+MARK_REFERENCE = "эталон"
+MARK_YES = "да"
+MARK_NO = "нет"
+
 
 def open_in_file_manager(path: str) -> None:
     if sys.platform == "win32":
@@ -116,21 +121,29 @@ class MainWindow(tk.Tk):
 
         tree_frame = ttk.Frame(middle)
         tree_frame.pack(side="left", fill="both", expand=True)
-        self.tree = ttk.Treeview(tree_frame, columns=("count", "status", "similarity"), selectmode="browse")
-        self.tree.heading("#0", text="Группа / папка")
-        self.tree.heading("count", text="Фото")
-        self.tree.heading("status", text="Статус")
-        self.tree.heading("similarity", text="Сходство с эталоном")
-        self.tree.column("#0", width=430)
+        self.tree = ttk.Treeview(tree_frame, columns=("reference", "rename", "count", "status", "similarity"),
+                                 selectmode="browse")
+        # Заголовки прижаты к тому же краю, что и значения: иначе подпись столбца стоит над
+        # пустым местом, а значения — у другого края (замечание с рабочей машины).
+        self.tree.heading("#0", text="Группа / папка", anchor="w")
+        self.tree.heading("reference", text="Эталон", anchor="w")
+        self.tree.heading("rename", text="Переименовать", anchor="w")
+        self.tree.heading("count", text="Фото", anchor="e")
+        self.tree.heading("status", text="Статус", anchor="w")
+        self.tree.heading("similarity", text="Сходство", anchor="w")
+        self.tree.column("#0", width=360, minwidth=180)
+        self.tree.column("reference", width=70, minwidth=60, anchor="w", stretch=False)
+        self.tree.column("rename", width=120, minwidth=100, anchor="w", stretch=False)
         self.tree.column("count", width=60, anchor="e", stretch=False)
-        self.tree.column("status", width=260)
-        self.tree.column("similarity", width=150, stretch=False)
+        self.tree.column("status", width=230, minwidth=120, stretch=False)
+        self.tree.column("similarity", width=110, minwidth=80, anchor="w", stretch=False)
         scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
-        self.tree.bind("<Double-1>", lambda e: self.open_folder())
+        self.tree.bind("<Double-1>", self._on_double_click)
+        self.tree.bind("<Button-1>", self._on_click)
 
         bold = font.nametofont("TkDefaultFont").copy()
         bold.configure(weight="bold")
@@ -321,6 +334,12 @@ class MainWindow(tk.Tk):
                     os.path.basename(os.path.normpath(root))
         return path
 
+    def _rename_mark(self, group: grouping.FolderGroup, folder: grouping.FolderInfo) -> str:
+        """Отметка «переименовывать ли папку». У эталона её нет: он образец, а не цель."""
+        if folder is group.reference:
+            return ""
+        return MARK_YES if folder.will_rename else MARK_NO
+
     def _folder_status(self, group: grouping.FolderGroup, folder: grouping.FolderInfo) -> str:
         if folder is group.reference:
             status = "ЭТАЛОН — готов" if folder.is_reference else "ЭТАЛОН — нужно переименовать вручную"
@@ -343,7 +362,7 @@ class MainWindow(tk.Tk):
         for k, group in enumerate(self.analysis.groups):
             ready = "эталон готов" if group.reference_is_ready else "нужно создать эталон"
             gid = self.tree.insert("", "end", text="Группа %d — %s" % (k + 1, ready),
-                                   values=("", "папок: %d" % len(group.folders), ""), open=True,
+                                   values=("", "", "", "папок: %d" % len(group.folders), ""), open=True,
                                    tags=("group",) if group.reference_is_ready else ("group", "not_ready"))
             self._item_group[gid] = k
             for folder in group.folders:
@@ -356,7 +375,9 @@ class MainWindow(tk.Tk):
                 if similarity == "низкое":
                     tags.append("low")
                 iid = self.tree.insert(gid, "end", text=self._display_path(folder.path),
-                                       values=(folder.count, self._folder_status(group, folder), similarity),
+                                       values=(MARK_REFERENCE if folder is group.reference else "",
+                                               self._rename_mark(group, folder),
+                                               folder.count, self._folder_status(group, folder), similarity),
                                        tags=tuple(tags))
                 self._item_folder[iid] = folder
                 self._item_group[iid] = k
@@ -364,11 +385,46 @@ class MainWindow(tk.Tk):
                     self.tree.selection_set(iid)
                     self.tree.see(iid)
         for e in self.analysis.errors:
-            self.tree.insert("", "end", text="Недоступна: %s" % self._display_path(e.path), values=("", e.message, ""),
-                             tags=("low",))
+            self.tree.insert("", "end", text="Недоступна: %s" % self._display_path(e.path),
+                             values=("", "", "", e.message, ""), tags=("low",))
         self._update_buttons()
 
     # --- действия ------------------------------------------------------------------------------
+
+    def _on_click(self, event) -> None:
+        """Щелчок по столбцу «Эталон» или «Переименовать» — это отметка, а не просто выделение."""
+        if self._busy or self.analysis is None:
+            return
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        item = self.tree.identify_row(event.y)
+        folder = self._item_folder.get(item)
+        if folder is None:
+            return
+        column = self.tree.identify_column(event.x)
+        if column == "#1":
+            self.tree.selection_set(item)
+            self.make_reference()
+        elif column == "#2":
+            self.toggle_rename(folder)
+
+    def toggle_rename(self, folder: grouping.FolderInfo) -> None:
+        """Снимает или ставит отметку «переименовывать эту папку».
+
+        Нужна, когда программа сочла папку уже названной, а на деле её не переименовывали
+        (или наоборот — папку назвали вручную и трогать её не надо).
+        """
+        group = self.analysis.groups[grouping.group_of(self.analysis, folder)]
+        if folder is group.reference:
+            return
+        folder.include = not folder.will_rename
+        self.render()
+        self.status_var.set(self._summary())
+
+    def _on_double_click(self, event) -> None:
+        """Двойной щелчок открывает папку, но не в столбцах с отметками: там он их только дёргает."""
+        if self.tree.identify_column(event.x) not in ("#1", "#2"):
+            self.open_folder()
 
     def _selected_item(self) -> Optional[str]:
         sel = self.tree.selection()
@@ -443,10 +499,15 @@ class MainWindow(tk.Tk):
         self.status_var.set(self._summary())
 
     def edit_reference(self) -> None:
+        """Открывает выделенную папку, а не эталон группы: человек выбрал её сам.
+
+        Раньше кнопка всегда открывала эталон, и при выделенной соседней папке получалось,
+        что программа «перепутала папки» (замечание с рабочей машины).
+        """
         group = self._selected_group()
         if group is None:
             return
-        folder = self.analysis.groups[group].reference
+        folder = self._selected_folder() or self.analysis.groups[group].reference
         ReferenceEditor(self, folder.path, self.app_config, self.names, on_done=self.refresh)
 
     def rename_group(self) -> None:

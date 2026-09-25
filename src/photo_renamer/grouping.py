@@ -33,6 +33,7 @@ class FolderInfo:
     named_share: float = 0.0  # доля фото, уже названных по шаблону
     categories: int = 0       # число разных категорий среди этих имён
     unreadable: int = 0
+    include: Optional[bool] = None   # выбор пользователя: переименовывать папку или нет
 
     @property
     def path(self) -> str:
@@ -47,6 +48,12 @@ class FolderInfo:
         return (self.count > 0 and self.named_share >= REFERENCE_SHARE
                 and self.categories >= max(REFERENCE_MIN_CATEGORIES, 0.05 * self.count))
 
+    @property
+    def will_rename(self) -> bool:
+        """Попадёт ли папка в переименование. По умолчанию — все, кроме уже названных по шаблону,
+        но решение программы можно переменить: отметку в окне анализа ставит человек."""
+        return (not self.is_reference) if self.include is None else self.include
+
 
 @dataclass
 class FolderGroup:
@@ -57,7 +64,7 @@ class FolderGroup:
 
     @property
     def targets(self) -> List[FolderInfo]:
-        return [f for f in self.folders if f is not self.reference and not f.is_reference]
+        return [f for f in self.folders if f is not self.reference and f.will_rename]
 
 
 @dataclass

@@ -57,8 +57,9 @@ def test_analyze_and_render(window, project):
     assert "эталон готов" in window.tree.item(groups[0], "text")
     assert "нужно создать эталон" in window.tree.item(groups[1], "text")
     rows = folder_rows(window)
-    assert (0, os.path.join("Проект", "A", "эталон"), ("6", "ЭТАЛОН — готов", "")) in rows
-    assert any(r[1].endswith("SN5") and r[2][1] == "ЭТАЛОН — нужно переименовать вручную" for r in rows)
+    assert (0, os.path.join("Проект", "A", "эталон"), ("эталон", "", "6", "ЭТАЛОН — готов", "")) in rows
+    assert any(r[1].endswith("SN5") and r[2][3] == "ЭТАЛОН — нужно переименовать вручную" for r in rows)
+    assert any(r[1].endswith("SN2") and r[2][:2] == ("", "да") for r in rows)  # папка будет переименована
     assert "Нужно создать эталонов: 1" in window.status_var.get()
     # папка проекта запоминается
     assert window._load_state()["project"] == str(project)
@@ -182,3 +183,32 @@ def test_lamp_switches_theme_and_remembers(window, tmp_path, monkeypatch):
     window.lamp.toggle()
     assert theme.current_mode() == "light" and window.app_config.theme == "light"
     theme.apply(window, "light")
+
+
+def test_rename_mark_can_be_switched(window, project):
+    """Отметку «переименовывать» ставит человек: программа могла счесть папку уже названной."""
+    window.root_var.set(str(project))
+    window.analyze()
+    window.wait_for_worker()
+    folder = select(window, "SN2")
+    group = window.analysis.groups[0]
+    assert folder in group.targets and folder.will_rename
+
+    window.toggle_rename(folder)
+    assert not folder.will_rename and folder not in group.targets
+    assert any(r[1].endswith("SN2") and r[2][1] == "нет" for r in folder_rows(window))
+
+    window.toggle_rename(folder)
+    assert folder.will_rename and folder in group.targets
+
+
+def test_reference_editor_opens_the_selected_folder(window, project, monkeypatch):
+    """Кнопка «Создать / изменить эталон» открывает выделенную папку, а не эталон группы."""
+    opened = []
+    monkeypatch.setattr(gui_app, "ReferenceEditor", lambda master, path, *a, **k: opened.append(path))
+    window.root_var.set(str(project))
+    window.analyze()
+    window.wait_for_worker()
+    folder = select(window, "SN2")
+    window.edit_reference()
+    assert opened == [folder.path]
