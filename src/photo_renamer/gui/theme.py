@@ -5,6 +5,7 @@
 или настройкой theme: "light" | "dark" | "system" (последнее — оформление как в системе).
 """
 
+import sys
 import tkinter as tk
 from tkinter import ttk
 
@@ -130,27 +131,114 @@ def apply(root: tk.Misc, mode: str = "light") -> None:
         pass
 
 
-# Коды клавиш (Windows): при русской раскладке Tk не узнаёт Ctrl+C/V/X/A/Z, потому что событие
-# приходит с кириллическим символом — «Ctrl+М» вместо «Ctrl+V». Код клавиши от раскладки не
-# зависит, поэтому разбираем сочетание по нему. С латинской раскладкой эта привязка не мешает:
-# у Tk для «<Control-v>» есть своя, более точная, и срабатывает она.
-_CLIPBOARD_KEYCODES = {67: "<<Copy>>", 86: "<<Paste>>", 88: "<<Cut>>", 90: "<<Undo>>", 65: "select-all"}
+# Сочетания с Ctrl (на macOS — с Command) при любой раскладке клавиатуры.
+#
+# Tk узнаёт «<Control-v>» только в латинской раскладке: в русской приходит «Ctrl+м», и
+# привязка не срабатывает. Поэтому событие разбирается по трём признакам:
+#   * сама буква;
+#   * её двойник по русской раскладке — «м» на клавише V, «ы» на S, «я» на Z;
+#   * код клавиши — он не зависит от раскладки, но только на Windows: на macOS Tk собирает
+#     код из самого символа (для «s» это 0xFF000073), и от раскладки он там как раз зависит.
+_SHORTCUT_KEYCODES = {"a": 65, "c": 67, "s": 83, "v": 86, "x": 88, "z": 90}
+_LAYOUT_TWINS = {
+    "a": ("ф", "cyrillic_ef"), "c": ("с", "cyrillic_es"), "s": ("ы", "cyrillic_yeru"),
+    "v": ("м", "cyrillic_em"), "x": ("ч", "cyrillic_che"), "z": ("я", "cyrillic_ya"),
+}
+# Что делают эти сочетания в полях ввода
+_CLIPBOARD_ACTIONS = {"c": "<<Copy>>", "v": "<<Paste>>", "x": "<<Cut>>", "z": "<<Undo>>",
+                      "a": "select-all"}
 _CLIPBOARD_CLASSES = ("Entry", "TEntry", "Text", "TCombobox", "Spinbox", "TSpinbox")
+CTRL_MASK, COMMAND_MASK, ALT_MASK = 0x0004, 0x0008, 0x20000
+# В Tk «Command» — это то же самое, что «Mod1», и на macOS это клавиша ⌘. На других системах
+# Mod1 означает что угодно (на Windows его выставляет NumLock), поэтому там сочетания
+# с Command не привязываются вовсе: иначе при включённом NumLock обычная буква сработала бы
+# как сочетание.
+COMMAND_IS_A_SHORTCUT = sys.platform == "darwin"
 
 
-def clipboard_action(keycode: int, state: int) -> str:
-    """Что делать по нажатию: имя виртуального события, «select-all» или пустая строка.
+def shortcut_pressed(state: int) -> bool:
+    """Нажат Ctrl (0x0004) или, на macOS, Command (0x0008), и не нажат Alt.
 
-    state — маска модификаторов события: нужен Ctrl (0x0004) и не нужен Alt (0x20000,
-    иначе AltGr на некоторых раскладках выглядит как Ctrl+Alt).
+    Alt (0x20000) отсекается: AltGr на некоторых раскладках выглядит как Ctrl+Alt.
     """
-    if not state & 0x0004 or state & 0x20000:
+    if state & ALT_MASK:
+        return False
+    if state & CTRL_MASK:
+        return True
+    return COMMAND_IS_A_SHORTCUT and bool(state & COMMAND_MASK)
+
+
+def clipboard_action(keycode: int = 0, state: int = 0, keysym: str = "", char: str = "") -> str:
+    """Что делать по нажатию: имя виртуального события, «select-all» или пустая строка."""
+    if not shortcut_pressed(state):
         return ""
-    return _CLIPBOARD_KEYCODES.get(keycode, "")
+    for letter, action in _CLIPBOARD_ACTIONS.items():
+        if shortcut_matches(letter, keysym, char, keycode):
+            return action
+    return ""
+
+
+def shortcut_label(widget: tk.Misc, letter: str) -> str:
+    """Как назвать сочетание в надписи на кнопке: «⌘S» на macOS, «Ctrl+S» в остальных системах."""
+    try:
+        aqua = widget.tk.call("tk", "windowingsystem") == "aqua"
+    except tk.TclError:
+        aqua = False
+    return ("\u2318%s" if aqua else "Ctrl+%s") % letter.upper()
+
+
+def shortcut_matches(letter: str, keysym: str, char: str = "", keycode: int = 0) -> bool:
+    """Та ли это клавиша, с поправкой на раскладку.
+
+    Совпасть может сама буква, её двойник по русской раскладке («ы» на клавише S) или код
+    клавиши. Код помогает на Windows, где он от раскладки не зависит; на macOS Tk собирает
+    код из самого символа, поэтому там работают первые два признака.
+    """
+    twin_char, twin_keysym = _LAYOUT_TWINS[letter]
+    keysym, char = (keysym or "").lower(), (char or "").lower()
+    return (keysym in (letter, twin_char, twin_keysym) or char in (letter, twin_char)
+            or keycode == _SHORTCUT_KEYCODES[letter])
+
+
+def bind_shortcut(widget: tk.Misc, letter: str, command, in_fields: bool = False) -> None:
+    """Сочетание Ctrl+<буква> (на macOS — и Command+<буква>) при любой раскладке клавиатуры.
+
+    Простой привязки мало сразу по двум причинам:
+
+    * «<Control-s>» Tk узнаёт только в латинской раскладке — в русской приходит «Ctrl+ы»;
+    * на macOS то же сочетание нажимают Command, а не Ctrl.
+
+    Поэтому рядом с привязками по букве стоит разбор события: буква, её двойник по русской
+    раскладке или код клавиши (последнее работает на Windows, где код от раскладки не зависит).
+    Дважды одно нажатие не сработает: из подходящих привязок одного виджета Tk выбирает самую
+    точную. in_fields=True — перехватывать сочетание и в полях ввода; по умолчанию там
+    работают свои Ctrl+C/V/X/Z (см. install_clipboard_keys).
+    """
+    def run(_event=None):
+        command()
+        return "break"
+
+    def by_event(event):
+        if not shortcut_pressed(getattr(event, "state", 0)):
+            return None
+        if not shortcut_matches(letter, getattr(event, "keysym", ""), getattr(event, "char", ""),
+                                getattr(event, "keycode", 0)):
+            return None
+        if not in_fields and event.widget.winfo_class() in _CLIPBOARD_CLASSES:
+            return None
+        return run()
+
+    for modifier in _shortcut_modifiers():
+        for key in (letter, letter.upper()):
+            widget.bind("<%s-%s>" % (modifier, key), run)
+        # add="+": разбор по коду и двойнику ставится для каждой буквы отдельно, и привязка
+        # следующего сочетания не должна затирать предыдущую
+        widget.bind("<%s-KeyPress>" % modifier, by_event, add="+")
 
 
 def _clipboard_key(event):
-    action = clipboard_action(getattr(event, "keycode", 0), getattr(event, "state", 0))
+    action = clipboard_action(getattr(event, "keycode", 0), getattr(event, "state", 0),
+                              getattr(event, "keysym", ""), getattr(event, "char", ""))
     if not action:
         return None
     widget = event.widget
@@ -166,9 +254,14 @@ def _clipboard_key(event):
 
 
 def install_clipboard_keys(root: tk.Misc) -> None:
-    """Включает Ctrl+C/V/X/A/Z в полях ввода при любой раскладке клавиатуры."""
+    """Включает Ctrl+C/V/X/A/Z (на macOS — ⌘C/V/X/A/Z) в полях ввода при любой раскладке."""
     for name in _CLIPBOARD_CLASSES:
-        root.bind_class(name, "<Control-KeyPress>", _clipboard_key)
+        for modifier in _shortcut_modifiers():
+            root.bind_class(name, "<%s-KeyPress>" % modifier, _clipboard_key)
+
+
+def _shortcut_modifiers():
+    return ("Control", "Command") if COMMAND_IS_A_SHORTCUT else ("Control",)
 
 
 def apply_to_existing(widget: tk.Misc, mode: str = None) -> None:
@@ -183,6 +276,8 @@ def apply_to_existing(widget: tk.Misc, mode: str = None) -> None:
                                 selectbackground=palette["select_bg"], selectforeground=palette["select_fg"])
             elif name == "Canvas":
                 child.configure(background=palette["surface"])
+                if hasattr(child, "redraw"):    # значок нарисован цветами прежней темы
+                    child.redraw()
             elif name in ("Toplevel", "Tk", "Frame", "Labelframe", "Menu"):
                 child.configure(background=palette["background"])
         except tk.TclError:
