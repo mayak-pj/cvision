@@ -10,7 +10,7 @@ import os
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox, ttk
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .. import config as cfg, grouping, matcher, names as names_mod, oplog, renamer
 from ..cache import PhotoCache
@@ -63,6 +63,8 @@ class BatchWindow(tk.Toplevel):
         self.done_folders = 0
         self.model: Optional[matcher.ReferenceModel] = None
         self.match: Optional[matcher.FolderMatch] = None
+        # (категория, подсказанное число ракурсов): по нему видно, задал ли человек своё
+        self._suggested_sides: Optional[Tuple[str, int]] = None
         self.folder: Optional[grouping.FolderInfo] = None
         self.categories: List[str] = []
         self.reports: List[str] = []         # отчёты по папкам: показываются одним окном в конце
@@ -186,6 +188,12 @@ class BatchWindow(tk.Toplevel):
         search_entry.pack(fill="x", pady=(BUTTON_GAP, BUTTON_GAP))
         buttons = ttk.Frame(side)
         buttons.pack(side="bottom", fill="x")      # кнопки не должны уезжать за край на низком экране
+        sides_frame = ttk.Frame(buttons)
+        sides_frame.pack(fill="x", pady=(BUTTON_GAP, 0))
+        ttk.Label(sides_frame, text="Ракурсов (фото на одну деталь):").pack(side="left")
+        self.sides_var = tk.IntVar(value=1)
+        self.sides_spin = ttk.Spinbox(sides_frame, from_=1, to=10, width=4, textvariable=self.sides_var)
+        self.sides_spin.pack(side="left", padx=6)
         ttk.Button(buttons, text="Применить к выбранным",
                    command=self.apply_selected_category).pack(fill="x", pady=(BUTTON_GAP, 0))
         ttk.Button(buttons, text="Не переименовывать",
@@ -198,6 +206,7 @@ class BatchWindow(tk.Toplevel):
         self.categories_list.pack(side="left", fill="both", expand=True)
         cat_scroll.pack(side="left", fill="y")
         self.categories_list.bind("<Double-Button-1>", lambda e: self.apply_selected_category())
+        self.categories_list.bind("<<ListboxSelect>>", lambda e: self._show_sides(force=True))
         for widget in (self.categories_list, search_entry):   # отмена работает, где бы ни был курсор
             self._bind_undo(widget)
 
@@ -580,6 +589,7 @@ class BatchWindow(tk.Toplevel):
         self._select_position(None if position is None else position + 1)
 
     def _on_row_select(self) -> None:
+        self._show_sides()          # выделили другое число фото — подсказка про ракурсы другая
         for widget in self.candidates_frame.winfo_children():
             widget.destroy()
         indexes = self._selected_indexes()
@@ -619,8 +629,8 @@ class BatchWindow(tk.Toplevel):
             self.search_entry.focus_set()
             return
         try:
-            # число ракурсов не спрашиваем: для знакомого имени оно уже запомнено, для нового
-            # берётся 1. Ракурсы задаются в редакторе эталона, где их видно по самим фото.
+            # число ракурсов здесь не решается: его показывает и даёт исправить поле
+            # «Ракурсов» — оно же применяется, когда категорию назначают фото
             name = self.names.add(typed, self.names.sides_for(typed))
         except ValueError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self)
@@ -658,6 +668,45 @@ class BatchWindow(tk.Toplevel):
                 self.categories_list.selection_set(position)
                 self.categories_list.see(position)
                 break
+        self._show_sides()
+
+    def _show_sides(self, force: bool = False) -> None:
+        """Показывает, сколько ракурсов получит выбранная категория, — это можно исправить.
+
+        Подставляется то, что программа сделала бы сама: у категории эталона — число из
+        образца (править его нечего, поле заблокировано), у своей — запомненное число или,
+        если фото выделено больше, число выделенных фото. Заданное руками число не
+        перебивается, пока не выбрана другая категория.
+        """
+        category = self._current_category()
+        if category is None or (not force and self._sides_are_set_by_hand(category)):
+            return
+        value = self._auto_sides(category)
+        self.sides_var.set(value)
+        self._suggested_sides = (category, value)
+        self.sides_spin.configure(
+            state="disabled" if category in self.reference_categories else "normal")
+
+    def _auto_sides(self, category: str) -> int:
+        """Сколько ракурсов программа взяла бы сама."""
+        if category in self.reference_categories:
+            known = (self.match.model.reference.categories.get(category_key(category))
+                     if self.match is not None else None)
+            return known.sides if known is not None else 1
+        return max(self.names.sides_for(category), len(self._selected_indexes()) or 1)
+
+    def _sides_are_set_by_hand(self, category: str) -> bool:
+        """Человек сам задал число ракурсов этой категории — значит, оно важнее подсказки."""
+        if self._suggested_sides is None or self._suggested_sides[0] != category:
+            return False
+        try:
+            return int(self.sides_var.get()) != self._suggested_sides[1]
+        except (tk.TclError, ValueError):       # в поле мусор — считаем, что не задано
+            return False
+
+    def _current_category(self) -> Optional[str]:
+        selection = self.categories_list.curselection()
+        return self.categories_list.get(selection[0]) if selection else None
 
     def _refresh_categories(self) -> None:
         self.categories_list.delete(0, "end")
@@ -704,17 +753,22 @@ class BatchWindow(tk.Toplevel):
     def _category_key(self, category: str, photos: int) -> str:
         """Ключ категории для раскладки. Заодно решает вопрос с ракурсами у своих категорий.
 
-        Категорию, которой нет в эталоне, назначают сразу нескольким выделенным фото — значит,
-        это ракурсы одной детали, а не разные детали: «Стойка многопозиционная фото 1» и
-        «фото 2», а не «Стойка многопозиционная» и «Стойка многопозиционная 2» (замечание с
-        рабочей машины). Число ракурсов запоминается в списке категорий. Состав эталона так
-        не меняется: там ракурсы видно по самому образцу.
+        Число берётся из поля «Ракурсов» — там видно, что получится, и это можно исправить
+        до нажатия кнопки. Само поле подставляет то, что программа сделала бы без спроса:
+        запомненное число ракурсов, а для новой категории — число выделенных фото, потому что
+        несколько фото одной новой категории — это ракурсы одной детали, а не разные детали
+        («Стойка многопозиционная фото 1» и «фото 2», а не «Стойка многопозиционная»
+        и «Стойка многопозиционная 2» — замечание с рабочей машины).
+
+        Число ракурсов запоминается в списке категорий. Состав эталона так не меняется:
+        там ракурсы видно по самому образцу.
         """
         if category in self.reference_categories:
             return category_key(category)
-        sides = max(self.names.sides_for(category), photos)
+        sides = max(1, int(self.sides_var.get()) if self._sides_are_set_by_hand(category)
+                    else max(self.names.sides_for(category), photos))
         key = matcher.add_category(self.match, category, sides)
-        if matcher.set_sides(self.match, key, sides) or sides > self.names.sides_for(category):
+        if matcher.set_sides(self.match, key, sides) or sides != self.names.sides_for(category):
             self.names.remember_sides(category, sides)
             self.names.save()
         return key

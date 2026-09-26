@@ -844,7 +844,14 @@ def renumber(result: FolderMatch) -> None:
         blocks[key] = (cat, groups)
 
     for cat, per_block in blocks.values():
-        for group in _merge_side_blocks(per_block):
+        merged = list(_merge_side_blocks(per_block))
+        if cat.key in result.extra_categories and len(merged) > 1:
+            # у своей категории образца нет, и по умолчанию она пишется без номера. Но если
+            # экземпляров несколько, номер нужен у каждого: «Стойка многопозиционная 1» и «2»,
+            # а не «Стойка многопозиционная» и «Стойка многопозиционная 2» — то же правило,
+            # что и в редакторе эталона
+            cat = _replace(cat, numbered=True)
+        for group in merged:
             instance = next_free.get(cat.key, 1)
             while instance in used.get(cat.key, set()):
                 instance += 1
@@ -880,12 +887,15 @@ def add_category(result: FolderMatch, name: str, sides: int = 1) -> str:
 def set_sides(result: FolderMatch, key: str, sides: int) -> bool:
     """Задаёт число ракурсов у категории, добавленной вручную. Возвращает True, если изменилось.
 
-    Состав эталона не трогается: там число ракурсов видно по самому образцу.
+    Число можно и уменьшить: человек задаёт его в окне переименования, и «1» означает, что
+    это разные детали, а не ракурсы одной. Состав эталона не трогается: там число ракурсов
+    видно по самому образцу.
     """
     category = result.extra_categories.get(key)
-    if category is None or sides <= category.sides:
+    sides = max(1, int(sides))
+    if category is None or sides == category.sides:
         return False
-    result.extra_categories[key] = _replace(category, sides=int(sides), has_side_suffix=sides > 1)
+    result.extra_categories[key] = _replace(category, sides=sides, has_side_suffix=sides > 1)
     return True
 
 

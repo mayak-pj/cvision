@@ -625,6 +625,55 @@ def test_own_category_on_several_photos_becomes_sides(batch):
     assert win.names.sides_for("Стойка многопозиционная") == 2
 
 
+def test_sides_field_shows_what_will_happen(batch):
+    """Поле «Ракурсов» показывает число, которое программа взяла бы сама."""
+    win, _ = batch
+    names = ["IMG_0002.JPG", "IMG_0003.JPG"]
+    win.tree.selection_set(*[iid_of(win, name) for name in names])
+    win._on_row_select()
+
+    win.search_var.set("Стойка многопозиционная")
+    win.add_category()                       # «+» — категория выбрана в списке
+    assert win.sides_var.get() == 2, "два выделенных фото новой категории — два ракурса"
+    assert str(win.sides_spin.cget("state")) == "normal"
+
+    win._select_category(win.reference_categories[0])
+    assert str(win.sides_spin.cget("state")) == "disabled", "ракурсы эталона задаёт образец"
+
+
+def test_sides_set_by_hand_win(batch):
+    """Замечание с рабочей машины: ракурсы нужно задавать самому, как в редакторе эталона."""
+    win, _ = batch
+    names = ["IMG_0002.JPG", "IMG_0003.JPG"]
+    win.tree.selection_set(*[iid_of(win, name) for name in names])
+    win._on_row_select()
+    win.search_var.set("Стойка многопозиционная")
+    win.add_category()
+
+    win.sides_var.set(1)                     # это не ракурсы, а две разные детали
+    win.apply_category("Стойка многопозиционная")
+    # у своей категории экземпляров несколько — номер получает каждый, как в эталоне
+    assert sorted(row_of(win, name)[0] for name in names) == \
+           ["Стойка многопозиционная 1.JPG", "Стойка многопозиционная 2.JPG"]
+    assert win.names.sides_for("Стойка многопозиционная") == 1
+
+
+def test_sides_can_be_raised_above_the_number_of_photos(batch):
+    """У детали бывает больше ракурсов, чем фото в этой папке."""
+    win, _ = batch
+    name = "IMG_0002.JPG"
+    win.tree.selection_set(iid_of(win, name))
+    win._on_row_select()
+    win.search_var.set("Стойка многопозиционная")
+    win.add_category()
+    assert win.sides_var.get() == 1
+
+    win.sides_var.set(3)
+    win.apply_category("Стойка многопозиционная")
+    assert row_of(win, name)[0] == "Стойка многопозиционная фото 1.JPG"
+    assert win.names.sides_for("Стойка многопозиционная") == 3
+
+
 def test_report_is_shown_once_at_the_end(batch, monkeypatch):
     """Отчёт по каждой папке не нужен: он копится и показывается один раз в конце группы."""
     win, _ = batch
