@@ -7,16 +7,17 @@
 
 import os
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 from typing import List, Optional
 
-from .. import editing, features as feat, oplog, renamer
+from .. import editing, oplog, renamer
 from ..cache import PhotoCache
 from ..names import NamesList
 from ..reference import is_template_name, load_reference
-from ..scanner import list_photos
+from ..scanner import list_photos, natural_key
 from . import theme
-from .thumbgrid import MAX_SIZE, MIN_SIZE, ThumbnailGrid, to_photo
+from .photoview import LargeView
+from .thumbgrid import MAX_SIZE, MIN_SIZE, ThumbnailGrid
 from .worker import Worker
 
 TITLE = "Эталон"
@@ -46,6 +47,7 @@ class ReferenceEditor(tk.Toplevel):
         self.worker = Worker(self)
         self.log = oplog.RunLog(app_config.logs_path(), "эталон_" + oplog.folder_label(folder))
         self.photos: List[str] = []          # имена в порядке съёмки (порядок не меняется)
+        self.shown: List[str] = []           # те же имена в порядке показа (см. _display_order)
         self.history: List[List[renamer.RenameItem]] = []
 
         self.title("%s: %s" % (TITLE, folder))
@@ -58,8 +60,11 @@ class ReferenceEditor(tk.Toplevel):
         self.focus_force()
         self._load_folder()
         self._learn_from_reference()
-        self.bind("<Control-z>", lambda e: self.undo())
-        self.bind("<Control-a>", lambda e: self.grid_widget.select_all())
+        theme.bind_shortcut(self, "z", self.undo)
+        theme.bind_shortcut(self, "a", self.grid_widget.select_all)
+        # переименование работает и когда курсор в поле поиска: своего Ctrl+S у поля нет,
+        # а набрать категорию и тут же нажать сочетание — обычный ход работы
+        theme.bind_shortcut(self, "s", self.rename_selected, in_fields=True)
 
     # --- построение окна -----------------------------------------------------------------
 
@@ -88,10 +93,16 @@ class ReferenceEditor(tk.Toplevel):
         side = ttk.Frame(body, padding=(10, 0, 0, 0))
         side.pack(side="left", fill="y")
         side.configure(width=330)
-        ttk.Label(side, text="Категория").pack(anchor="w")
+        header = ttk.Frame(side)
+        header.pack(fill="x")
+        ttk.Label(header, text="Категория").pack(side="left")
+        theme.IconButton(header, "delete", command=self.remove_name,
+                         hint="Удалить категорию из списка").pack(side="right")
+        theme.IconButton(header, "add", command=self.add_name,
+                         hint="Добавить категорию в список").pack(side="right", padx=(0, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self._refresh_names())
-        search = ttk.Entry(side, textvariable=self.search_var)
+        self.search_entry = search = ttk.Entry(side, textvariable=self.search_var)
         search.pack(fill="x", pady=(2, 4))
         search.bind("<Down>", lambda e: (self.names_list.focus_set(), self._select_first()))
         search.bind("<Return>", lambda e: self.rename_selected())
@@ -107,21 +118,17 @@ class ReferenceEditor(tk.Toplevel):
         self.names_list.bind("<Return>", lambda e: self.rename_selected())
         self.names_list.bind("<Double-Button-1>", lambda e: self.rename_selected())
 
-        buttons = ttk.Frame(side)
-        buttons.pack(fill="x", pady=4)
-        ttk.Button(buttons, text="Добавить…", command=self.add_name).pack(side="left", expand=True, fill="x")
-        ttk.Button(buttons, text="Удалить", command=self.remove_name).pack(side="left", expand=True, fill="x",
-                                                                           padx=(4, 0))
-
         sides_frame = ttk.Frame(side)
         sides_frame.pack(fill="x", pady=(8, 4))
         ttk.Label(sides_frame, text="Ракурсов (фото на одну деталь):").pack(side="left")
         self.sides_var = tk.IntVar(value=1)
         ttk.Spinbox(sides_frame, from_=1, to=10, width=4, textvariable=self.sides_var).pack(side="left", padx=6)
 
-        self.rename_btn = ttk.Button(side, text="Переименовать выделенные", command=self.rename_selected)
+        self.rename_btn = ttk.Button(side, command=self.rename_selected,
+                                     text="Переименовать выделенные (%s)" % theme.shortcut_label(self, "s"))
         self.rename_btn.pack(fill="x", pady=(6, 2))
-        self.undo_btn = ttk.Button(side, text="Отменить (Ctrl+Z)", command=self.undo, state="disabled")
+        self.undo_btn = ttk.Button(side, command=self.undo, state="disabled",
+                                   text="Отменить (%s)" % theme.shortcut_label(self, "z"))
         self.undo_btn.pack(fill="x", pady=2)
         ttk.Separator(side).pack(fill="x", pady=8)
         ttk.Button(side, text="Готово", command=self.close).pack(fill="x")
@@ -149,15 +156,28 @@ class ReferenceEditor(tk.Toplevel):
             return
         self.photos = list(scan.photos)
         self.order_differs = scan.order_differs
+        self.shown = self._display_order()
         self.grid_widget.set_items(self._items(), self._template_flags())
         self._refresh_names()
         self._update_status()
 
+    def _display_order(self) -> List[str]:
+        """Порядок показа: названные — по именам, ещё не названные — в порядке съёмки следом.
+
+        Так стороны и экземпляры одной детали («Кабель соединительный 1…4») стоят рядом, и
+        видно, что получилось, а неназванные кадры собраны в конце — с ними и работают.
+        Порядок съёмки (self.photos) при этом не меняется: по нему делятся стороны
+        и нумеруются экземпляры.
+        """
+        named = [name for name in self.photos if is_template_name(name)]
+        rest = [name for name in self.photos if not is_template_name(name)]
+        return sorted(named, key=natural_key) + rest
+
     def _items(self):
-        return [(name, os.path.join(self.folder, name)) for name in self.photos]
+        return [(name, os.path.join(self.folder, name)) for name in self.shown]
 
     def _template_flags(self):
-        return [is_template_name(name) for name in self.photos]
+        return [is_template_name(name) for name in self.shown]
 
     def _learn_from_reference(self) -> None:
         """Если в папке уже есть названные фото, запоминаем их категории и число ракурсов."""
@@ -222,28 +242,38 @@ class ReferenceEditor(tk.Toplevel):
     # --- действия ------------------------------------------------------------------------
 
     def add_name(self) -> None:
-        name = simpledialog.askstring(TITLE, "Новая категория:", parent=self,
-                                      initialvalue=self.search_var.get().strip())
-        if not name or not name.strip():
+        """Добавляет то, что набрано в поле поиска: человек и так видит, что такой категории нет.
+
+        Отдельного окна с «ОК» нет: имя уже введено, переспрашивать его нечего.
+        """
+        typed = self.search_var.get().strip()
+        if not typed:
+            self.status_var.set("Наберите название категории в поле справа и нажмите «+»")
+            self.search_entry.focus_set()
             return
         try:
-            name = self.names.add(name, self.sides_var.get())
+            name = self.names.add(typed, self.sides_var.get())
         except ValueError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self)
             return
         self.names.save()
         self.search_var.set("")
         self._refresh_names()
+        self._select_name(name)
+
+    def _select_name(self, name: str) -> None:
         for i in range(self.names_list.size()):
             if self.names_list.get(i) == name:
                 self.names_list.selection_clear(0, "end")
                 self.names_list.selection_set(i)
                 self.names_list.see(i)
+                self._on_name_selected()
                 break
 
     def remove_name(self) -> None:
         name = self.current_name()
         if not name:
+            messagebox.showinfo(TITLE, "Выберите категорию в списке.", parent=self)
             return
         if messagebox.askyesno(TITLE, "Удалить «%s» из списка категорий?" % name, parent=self):
             self.names.remove(name)
@@ -284,10 +314,13 @@ class ReferenceEditor(tk.Toplevel):
         self.grid_widget.clear_selection()
 
     def _apply_renames(self, done) -> None:
-        """Обновляет имена в сетке, сохраняя порядок съёмки."""
+        """Обновляет имена в сетке и переставляет ячейки в порядок показа."""
         mapping = {item.old: item.new for item in done}
         self.photos = [mapping.get(name, name) for name in self.photos]
-        self.grid_widget.update_names(self._items(), self._template_flags())
+        was = {mapping.get(name, name): index for index, name in enumerate(self.shown)}
+        self.shown = self._display_order()
+        self.grid_widget.reorder([was[name] for name in self.shown], self._items(),
+                                 self._template_flags())
         self._update_status()
 
     def undo(self) -> None:
@@ -301,7 +334,7 @@ class ReferenceEditor(tk.Toplevel):
             self.undo_btn.configure(state="disabled")
 
     def _open_large(self, index: int) -> None:
-        LargeView(self, self.folder, self.photos, index, self.cache)
+        LargeView(self, self.folder, self.shown, index, self.cache)   # листается как показано
 
     def close(self) -> None:
         self.worker.cancel()

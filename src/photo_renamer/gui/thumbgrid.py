@@ -102,6 +102,24 @@ class ThumbnailGrid(ttk.Frame):
         self.template = list(template) + [False] * (len(items) - len(template))
         self._layout()
 
+    def reorder(self, order: Sequence[int], items: Sequence[Tuple[str, str]],
+                template: Sequence[bool] = ()) -> None:
+        """Показывает те же фото в другом порядке, не перечитывая миниатюры.
+
+        order[i] — какая ячейка прежней сетки становится i-й. Вместе с ячейками переезжают
+        прочитанные миниатюры и выделение, поэтому после переименования сетка перестраивается
+        мгновенно и ничего не теряет (имена и пути к этому времени уже новые — они в items).
+        """
+        moved = {old_index: new_index for new_index, old_index in enumerate(order)}
+        self._images = [self._images[old_index] for old_index in order]
+        self._photos = [None] * len(order)
+        self.selection = {moved[index] for index in self.selection if index in moved}
+        self._anchor = None
+        self.items = list(items)
+        self.template = list(template) + [False] * (len(items) - len(template))
+        self._layout()
+        self._notify()
+
     def selected_names(self) -> List[str]:
         return [self.items[i][0] for i in sorted(self.selection)]
 
@@ -145,8 +163,13 @@ class ThumbnailGrid(ttk.Frame):
 
     def _start_background_loading(self) -> None:
         """Чтение фото — в фоновой задаче, рисование — в главном потоке."""
-        paths = [path for _, path in self.items]
-        if not paths:
+        # уже прочитанные миниатюры пропускаем: после перестановки сетки заново читать
+        # сотни фото (пусть даже из кэша) незачем
+        pending = [(index, path) for index, (_, path) in enumerate(self.items) if self._images[index] is None]
+        if not pending:
+            self._pending = len(self.items)
+            if self.on_load_progress:
+                self.on_load_progress(self._pending, len(self.items))
             return
         if self.worker.busy():
             self.worker.cancel()
@@ -155,7 +178,7 @@ class ThumbnailGrid(ttk.Frame):
         def job(post, cancelled):
             loader = self.make_loader()
             try:
-                for index, path in enumerate(paths):
+                for index, path in pending:
                     if cancelled():
                         return
                     try:
@@ -176,7 +199,9 @@ class ThumbnailGrid(ttk.Frame):
         if index >= len(self._images):
             return
         self._images[index] = image
-        self._pending = max(self._pending, index + 1)
+        # считаем прочитанные, а не последнюю позицию: при догрузке после перестановки
+        # ячейки приходят не подряд
+        self._pending = sum(1 for ready in self._images if ready is not None)
         self._draw_cell(index)
         if self.on_load_progress:
             self.on_load_progress(self._pending, len(self.items))

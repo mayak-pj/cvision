@@ -9,7 +9,7 @@
 import os
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 from typing import Dict, List, Optional
 
 from .. import config as cfg, grouping, matcher, names as names_mod, oplog, renamer
@@ -182,7 +182,7 @@ class BatchWindow(tk.Toplevel):
                          hint="Добавить категорию в список").pack(side="right", padx=(0, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self._refresh_categories())
-        search_entry = ttk.Entry(side, textvariable=self.search_var)
+        self.search_entry = search_entry = ttk.Entry(side, textvariable=self.search_var)
         search_entry.pack(fill="x", pady=(BUTTON_GAP, BUTTON_GAP))
         buttons = ttk.Frame(side)
         buttons.pack(side="bottom", fill="x")      # кнопки не должны уезжать за край на низком экране
@@ -425,11 +425,10 @@ class BatchWindow(tk.Toplevel):
 
     # «<<Undo>>» — обязательно: на macOS Cmd+Z перехватывает стандартное меню «Правка»,
     # и обычная привязка к сочетанию клавиш до окна не доходит.
-    UNDO_SEQUENCES = ("<Control-z>", "<Command-z>", "<Control-Z>", "<Command-Z>", "<<Undo>>")
-
     def _bind_undo(self, widget) -> None:
-        for sequence in self.UNDO_SEQUENCES:
-            widget.bind(sequence, self.undo_edit)
+        """Ctrl+Z (на macOS — Cmd+Z) работает, где бы ни был курсор, и в любой раскладке."""
+        theme.bind_shortcut(widget, "z", self.undo_edit, in_fields=True)
+        widget.bind("<<Undo>>", self.undo_edit)
 
     _ABSENT = object()                       # признак «ручной правки для этого фото не было»
 
@@ -609,15 +608,20 @@ class BatchWindow(tk.Toplevel):
         return self.reference_categories + sorted(extra)
 
     def add_category(self) -> None:
-        """Деталь, которой нет в эталоне: имя добавляется в список и сразу доступно для выбора."""
-        name = simpledialog.askstring(TITLE, "Новая категория:", parent=self,
-                                      initialvalue=self.search_var.get().strip())
-        if not name or not name.strip():
+        """Деталь, которой нет в эталоне: набранное в поиске имя сразу попадает в список.
+
+        Отдельного окна с «ОК» нет: человек уже ввёл название, увидел пустой список —
+        значит, такой категории нет, — и нажал «+».
+        """
+        typed = self.search_var.get().strip()
+        if not typed:
+            self.status_var.set("Наберите название категории в поле справа и нажмите «+»")
+            self.search_entry.focus_set()
             return
         try:
             # число ракурсов не спрашиваем: для знакомого имени оно уже запомнено, для нового
             # берётся 1. Ракурсы задаются в редакторе эталона, где их видно по самим фото.
-            name = self.names.add(name, self.names.sides_for(name))
+            name = self.names.add(typed, self.names.sides_for(typed))
         except ValueError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self)
             return
