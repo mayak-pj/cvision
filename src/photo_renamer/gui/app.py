@@ -128,19 +128,34 @@ class MainWindow(tk.Tk):
         self.tree.heading("#0", text="Группа / папка", anchor="w")
         self.tree.heading("reference", text="Эталон", anchor="w")
         self.tree.heading("rename", text="Переименовать", anchor="w")
-        self.tree.heading("count", text="Фото", anchor="e")
+        self.tree.heading("count", text="Фото", anchor="w")
         self.tree.heading("status", text="Статус", anchor="w")
         self.tree.heading("similarity", text="Сходство", anchor="w")
-        self.tree.column("#0", width=360, minwidth=180)
+        # Значения всех столбцов прижаты к левому краю: взгляд читает строку слева направо,
+        # и число фото не приходится искать у дальнего края.
+        #
+        # Ни один столбец не растягивается. Иначе Tk, меняя ширину столбца, забирает разницу
+        # у растяжимого: потянешь границу «Фото» — на столько же ужмётся «Группа / папка»,
+        # которую никто не трогал (замечание с рабочей машины). Теперь меняется только тот
+        # столбец, который тянут, а остальные просто сдвигаются, как в Проводнике; если они
+        # перестали помещаться, внизу появляется полоса прокрутки.
+        self.tree.column("#0", width=360, minwidth=180, stretch=False)
         self.tree.column("reference", width=70, minwidth=60, anchor="w", stretch=False)
         self.tree.column("rename", width=120, minwidth=100, anchor="w", stretch=False)
-        self.tree.column("count", width=60, anchor="e", stretch=False)
-        self.tree.column("status", width=230, minwidth=120, stretch=False)
+        self.tree.column("count", width=60, minwidth=50, anchor="w", stretch=False)
+        self.tree.column("status", width=230, minwidth=120, anchor="w", stretch=False)
         self.tree.column("similarity", width=110, minwidth=80, anchor="w", stretch=False)
+        self._fit_column_headers()
         scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="left", fill="y")
+        self.hscroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=self.hscroll.set)
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.tree.bind("<Configure>", lambda e: self._update_hscroll())
+        # после того как границу столбца отпустили, ширины уже новые — можно решать про полосу
+        self.tree.bind("<ButtonRelease-1>", lambda e: self.after_idle(self._update_hscroll), add="+")
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
         self.tree.bind("<Double-1>", self._on_double_click)
         self.tree.bind("<Button-1>", self._on_click)
@@ -350,6 +365,27 @@ class MainWindow(tk.Tk):
         if folder.unreadable:
             status += ("; " if status else "") + "не прочитано фото: %d" % folder.unreadable
         return status
+
+    def _fit_column_headers(self) -> None:
+        """Столбец не бывает уже своего заголовка.
+
+        На рабочей машине шрифт крупнее, и подписи обрезались («Сходство с э…»).
+        """
+        heading_font = font.nametofont("TkHeadingFont")
+        for column in ("#0",) + self.tree.cget("columns"):
+            needed = heading_font.measure(self.tree.heading(column, "text")) + 28
+            self.tree.column(column,
+                             width=max(self.tree.column(column, "width"), needed),
+                             minwidth=max(self.tree.column(column, "minwidth"), needed))
+
+    def _update_hscroll(self) -> None:
+        """Полоса прокрутки внизу нужна, только если столбцы перестали помещаться."""
+        total = sum(self.tree.column(column, "width")
+                    for column in ("#0",) + self.tree.cget("columns"))
+        if total > self.tree.winfo_width():
+            self.hscroll.grid(row=1, column=0, sticky="ew")
+        else:
+            self.hscroll.grid_remove()
 
     def render(self) -> None:
         selected = self._selected_folder()

@@ -212,3 +212,58 @@ def test_reference_editor_opens_the_selected_folder(window, project, monkeypatch
     folder = select(window, "SN2")
     window.edit_reference()
     assert opened == [folder.path]
+
+
+def test_dragging_a_column_does_not_move_the_others(window):
+    """Замечание с рабочей машины: столбцы «неестественно уезжают».
+
+    Tk забирает разницу у растяжимого столбца, поэтому при перетаскивании границы «Фото»
+    ужималась «Группа / папка», которую никто не трогал.
+    """
+    window.deiconify()
+    window.geometry("1100x600")
+    window.update()
+    tree = window.tree
+    columns = ("#0",) + tree.cget("columns")
+    before = {name: tree.column(name, "width") for name in columns}
+
+    border = before["#0"] + before["reference"] + before["rename"] + before["count"]
+    tree.event_generate("<ButtonPress-1>", x=border, y=8, when="now")
+    tree.event_generate("<B1-Motion>", x=border + 60, y=8, when="now")
+    tree.event_generate("<ButtonRelease-1>", x=border + 60, y=8, when="now")
+    window.update()
+
+    after = {name: tree.column(name, "width") for name in columns}
+    assert after["count"] > before["count"], "столбец, который тянули, не изменился"
+    assert {name: after[name] for name in columns if name != "count"} == \
+           {name: before[name] for name in columns if name != "count"}
+
+
+def test_horizontal_scrollbar_appears_only_when_needed(window):
+    window.deiconify()
+    window.geometry("1400x600")
+    window.update()
+    window._update_hscroll()
+    assert not window.hscroll.winfo_ismapped(), "всё помещается — полоса не нужна"
+
+    window.tree.column("status", width=900)
+    window._update_hscroll()
+    window.update()
+    assert window.hscroll.winfo_ismapped(), "столбцы не помещаются — нужна полоса прокрутки"
+
+
+def test_columns_are_not_narrower_than_their_headings(window):
+    """Подписи столбцов не должны обрезаться — на рабочей машине шрифт крупнее."""
+    from tkinter import font
+
+    window.update()
+    heading_font = font.nametofont("TkHeadingFont")
+    for name in ("#0",) + window.tree.cget("columns"):
+        title = window.tree.heading(name, "text")
+        assert window.tree.column(name, "width") >= heading_font.measure(title), title
+
+
+def test_every_column_reads_from_the_left(window):
+    for name in window.tree.cget("columns"):
+        assert str(window.tree.column(name, "anchor")) == "w", name
+        assert str(window.tree.heading(name, "anchor")) == "w", name
