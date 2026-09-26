@@ -35,6 +35,15 @@ _CAMERA_NAME_RE = re.compile(r"^(dsc|dscn|dcim|img|pxl|p\d|photo|image|wp)([_\-\
 # такое имя считалось названным по шаблону: категория «file (1)», и папка с 17 такими файлами
 # выглядела как уже переименованная (замечено на рабочей машине, см. docs/decisions.md).
 _JUNK_CHARS = set("()[]{}<>_|\\/*?\"`~!@#$%^&=+")
+# Служебные имена, которые дают камера, телефон и сам Проводник: «File 1.jpg», «Фото 3.jpg»,
+# «Снимок.jpg», «Новый 2.jpg». По форме это имя по шаблону — «Категория N», — но «File» не
+# комплектующее: без этой проверки такая папка выглядела названной, а «File» попадал в список
+# категорий (замечено на рабочей машине, см. docs/decisions.md).
+_SERVICE_WORDS = {
+    "file", "files", "файл", "photo", "фото", "image", "изображение", "picture", "pic",
+    "снимок", "снимки", "кадр", "скан", "scan", "копия", "copy", "новый", "новая", "новое",
+    "new", "untitled", "безымянный", "документ", "document", "screenshot", "img", "dsc",
+}
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,30 @@ class ParsedName:
     instance: Optional[int]     # None — номер в имени не указан
     side: Optional[int]         # None — «фото N» в имени нет
     side_word: Optional[str] = None  # написание слова «фото» как в имени
+
+
+# Латинские буквы, неотличимые на вид от кириллических. Их набирают случайно, не переключив
+# раскладку: «Cтойка многопозиционная» с латинской C выглядит как обычное слово, но встаёт
+# в начало списка (латиница идёт раньше кириллицы) и считается ОТДЕЛЬНОЙ категорией.
+_LATIN_TO_CYRILLIC = str.maketrans("ABCEHKMOPTXYacepxoy", "АВСЕНКМОРТХУасерхоу")
+_CYRILLIC_RANGE = ("\u0400", "\u04FF")
+
+
+def fix_mixed_script(text: str) -> str:
+    """Чинит латинские буквы, попавшие внутрь русского слова.
+
+    Заменяются только буквы-двойники и только в словах, где кириллица уже есть: «Cтойка» →
+    «Стойка», а «Кабель miniSAS», «Плата расширения PCIE» и «Съемный накопитель SSD»
+    остаются как есть — там латиница настоящая.
+    """
+    return re.sub(r"[^\W\d_]+", _fix_word, normalize_text(text))
+
+
+def _fix_word(match) -> str:
+    word = match.group()
+    if not any(_CYRILLIC_RANGE[0] <= letter <= _CYRILLIC_RANGE[1] for letter in word):
+        return word            # слово целиком латинское — это не опечатка раскладки
+    return word.translate(_LATIN_TO_CYRILLIC)
 
 
 def normalize_text(text: str) -> str:
@@ -64,6 +97,8 @@ def is_template_name(filename: str) -> bool:
     parsed = parse_name(filename)
     if not re.search(r"[^\W\d_]{2}", parsed.category):  # в категории должно быть слово
         return False
+    if is_service_name(parsed.category):     # «File 1», «Фото 2» — кадр не назван, а не назван «File»
+        return False
     parts = [parsed.category]
     if parsed.instance is not None:
         parts.append(str(parsed.instance))
@@ -79,12 +114,22 @@ def looks_like_category(category: str) -> bool:
     комплектующего, а неназванный кадр, и в списке категорий ему не место.
     """
     category = normalize_text(category)
-    return bool(re.search(r"[^\W\d_]{2}", category)) and not (_JUNK_CHARS & set(category))
+    return (bool(re.search(r"[^\W\d_]{2}", category)) and not (_JUNK_CHARS & set(category))
+            and not is_service_name(category))
+
+
+def is_service_name(category: str) -> bool:
+    """Состоит ли название только из служебных слов и цифр: «File», «Фото 2», «Новый снимок».
+
+    Такое имя — признак неназванного кадра, а не название комплектующего.
+    """
+    words = [word for word in re.split(r"[\s\-_]+", normalize_text(category).casefold()) if word]
+    return bool(words) and all(word in _SERVICE_WORDS or word.isdigit() for word in words)
 
 
 def category_key(category: str) -> str:
-    """Ключ группировки категорий: регистр и лишние пробелы не важны."""
-    return normalize_text(category).casefold()
+    """Ключ группировки категорий: регистр, лишние пробелы и латинские двойники не важны."""
+    return fix_mixed_script(category).casefold()
 
 
 def parse_name(filename: str) -> ParsedName:

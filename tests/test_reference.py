@@ -175,8 +175,53 @@ def test_camera_names(name):
     ("file (17).JPG", False),
     ("Снимок_3.jpg", False),
     ("Кулер [2].jpg", False),
+    ("File 1.jpg", False),                # служебные имена без скобок: не комплектующее
+    ("File.JPG", False),
+    ("Фото 2.jpg", False),
+    ("Снимок 3.jpg", False),
+    ("Новая копия 2.jpg", False),
+    ("Фотоаппарат.jpg", True),            # служебное слово — только целиком, не началом
+    ("Кабель питания 2.jpg", True),
 ])
 def test_template_names(name, expected):
     from photo_renamer.reference import is_template_name
 
     assert is_template_name(name) is expected
+
+
+@pytest.mark.parametrize("category, expected", [
+    ("File", False),
+    ("фото", False),
+    ("Новый снимок 2", False),
+    ("IMG", False),
+    ("Кулер", True),
+    ("Плата оперативной памяти", True),
+    ("Фотоаппарат", True),
+])
+def test_service_names_are_not_categories(category, expected):
+    """Случай с рабочей машины: «File» попадал в список категорий из имён вроде «File 1.jpg»."""
+    from photo_renamer.reference import looks_like_category
+
+    assert looks_like_category(category) is expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("C" + "тойка", "Стойка"),                       # латинская C в русском слове
+    ("M" + "атрица", "Матрица"),                     # латинская M
+    ("Плата " + "y" + "правления", "Плата управления"),   # латинская y в середине слова
+    ("Кабель miniSAS", "Кабель miniSAS"),            # настоящая латиница не трогается
+    ("Плата расширения PCIE", "Плата расширения PCIE"),
+    ("Съемный накопитель SSD", "Съемный накопитель SSD"),
+    ("Кулер", "Кулер"),
+])
+def test_fix_mixed_script(text, expected):
+    from photo_renamer.reference import fix_mixed_script
+
+    assert fix_mixed_script(text) == expected
+
+
+def test_lookalike_letters_do_not_split_a_category():
+    """Одна деталь, написанная двумя раскладками, остаётся одной категорией."""
+    from photo_renamer.reference import category_key
+
+    assert category_key("C" + "тойка многопозиционная") == category_key("Стойка многопозиционная")

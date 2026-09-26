@@ -121,3 +121,38 @@ def test_learn_from_skips_service_names():
     assert names.names() == ["Кабель сетевой"]
     names.add("Плата (вид сзади)")
     assert "Плата (вид сзади)" in names
+
+
+def test_junk_names_are_dropped_from_the_file(tmp_path):
+    """Мусор из старой версии программы уходит из names.txt сам.
+
+    Случай с рабочей машины: в списке категорий висели «file (1)»…«file (17)» — их туда
+    записала версия, которая считала такие имена названными по шаблону.
+    """
+    path = tmp_path / "names.txt"
+    path.write_text("Кулер | 1\nFile | 1\nФото | 2\nfile (1) | 1\nfile (17) | 1\n"
+                    "Фотоаппарат | 1\nПанель USB, VGA, кнопок и индикации | 2\n", encoding="utf-8")
+    names = NamesList(str(path))
+    assert names.names() == ["Кулер", "Фотоаппарат", "Панель USB, VGA, кнопок и индикации"]
+    names.save()
+    saved = path.read_text(encoding="utf-8")
+    assert "file" not in saved and "Фото |" not in saved
+
+
+def test_latin_lookalike_letters_are_fixed(tmp_path):
+    """Случай с рабочей машины: «Cтойка многопозиционная» с латинской C ушла в начало списка."""
+    latin = "C" + "тойка многопозиционная"
+    names = NamesList(str(tmp_path / "names.txt"))
+    for name in ("Вентилятор", "Радиатор", "Шлейф"):
+        names.add(name)
+    assert names.add(latin) == "Стойка многопозиционная"          # чинится при добавлении
+    assert names.search("")[-2:] == ["Стойка многопозиционная", "Шлейф"]
+    assert latin in names                                          # старое написание — то же имя
+    assert names.search("стойка") == ["Стойка многопозиционная"]
+
+
+def test_genuine_latin_names_are_kept(tmp_path):
+    names = NamesList(str(tmp_path / "names.txt"))
+    for name in ("Кабель miniSAS", "Плата расширения PCIE", "Съемный накопитель SSD",
+                 "Панель USB, VGA, кнопок и индикации", "RAID контроллер"):
+        assert names.add(name) == name

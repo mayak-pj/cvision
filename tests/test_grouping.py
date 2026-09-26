@@ -71,8 +71,12 @@ def test_single_folder_and_errors(tmp_path):
 def test_generic_numbering_is_not_a_reference():
     from photo_renamer.scanner import FolderScan
 
+    # «File 1.JPG» — служебное имя, а не название комплектующего: папка не названа вовсе
     generic = grouping.folder_info(FolderScan("/x", ["File %d.JPG" % i for i in range(1, 191)]))
-    assert generic.named_share == 1.0 and generic.categories == 1 and not generic.is_reference
+    assert generic.named_share == 0.0 and generic.categories == 0 and not generic.is_reference
+    # а папка из одной настоящей категории названа, но эталоном всё равно не считается
+    single = grouping.folder_info(FolderScan("/z", ["Деталь %d.JPG" % i for i in range(1, 191)]))
+    assert single.named_share == 1.0 and single.categories == 1 and not single.is_reference
     real = grouping.folder_info(FolderScan("/y", ["Кулер.JPG", "Процессор 1 фото 1.JPG", "Процессор 1 фото 2.JPG",
                                                   "Кабель HDMI.JPG"]))
     assert real.is_reference

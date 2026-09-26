@@ -16,17 +16,17 @@
 """
 
 import os
-import unicodedata
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from .reference import looks_like_category
+from .reference import fix_mixed_script, looks_like_category
 
 DEFAULT_SIDES = 1
 SEPARATOR = "|"
 
 
 def fold(text: str) -> str:
-    return unicodedata.normalize("NFC", text).casefold().replace("ё", "е")
+    """Ключ для поиска и сортировки: регистр, «ё»/«е» и латинские двойники не различаются."""
+    return fix_mixed_script(text).casefold().replace("ё", "е")
 
 
 def _words(text: str) -> List[str]:
@@ -91,6 +91,13 @@ class NamesList:
                 if fold(name) in self._names:
                     warnings.append("Строка %d: «%s» уже есть в списке" % (number, name))
                     continue
+                if not looks_like_category(name):
+                    # Мусор, попавший в файл прежней версией программы из имён вроде «file (1).jpg»
+                    # или «File 1.jpg». Заодно отсеиваются имена со служебными знаками: такое имя
+                    # программа всё равно не смогла бы записать в файл по шаблону. При следующем
+                    # сохранении списка строка уходит из файла
+                    warnings.append("Строка %d: «%s» — не название комплектующего" % (number, name))
+                    continue
                 self.add(name, sides)
         return warnings
 
@@ -118,7 +125,9 @@ class NamesList:
 
     def add(self, name: str, sides: int = DEFAULT_SIDES) -> str:
         """Добавляет имя (или обновляет число ракурсов). Возвращает написание имени в списке."""
-        name = " ".join(name.split())
+        # латинская буква, попавшая в русское слово не той раскладкой, чинится сразу: иначе она
+        # разойдётся по именам файлов целого проекта
+        name = fix_mixed_script(name)
         key = fold(name)
         if not key:
             raise ValueError("Пустое имя")
