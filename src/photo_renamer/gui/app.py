@@ -24,7 +24,9 @@ from .review import BatchWindow
 TITLE = "Переименование фото комплектующих"
 
 # Отметки в таблице пишутся словами: значки вроде «✔» на Windows 7 в tkinter выводятся не всюду.
-MARK_REFERENCE = "эталон"
+# Галочка эталона: её ставит человек щелчком по столбцу, а программа — на самую
+# переименованную папку группы
+MARK_REFERENCE = "\u2713"
 MARK_YES = "да"
 MARK_NO = "нет"
 
@@ -36,6 +38,12 @@ def open_in_file_manager(path: str) -> None:
         subprocess.Popen(["open", path])
     else:
         subprocess.Popen(["xdg-open", path])
+
+
+def _percent(share: float) -> int:
+    """Доля в процентах. 100 пишется только когда названо всё: 99.6 % — это ещё не готово."""
+    value = int(round(share * 100))
+    return min(value, 99) if share < 1 else value
 
 
 def _tooltip(widget, text: str) -> None:
@@ -112,7 +120,9 @@ class MainWindow(tk.Tk):
         _tooltip(self.lamp, "Оформление: лампочка горит — светлое, погашена — тёмное")
 
         hint = ("Программа находит все папки с фото, сравнивает их и объединяет похожие в группы. "
-                "Для каждой группы нужен один эталон — папка, переименованная по шаблону.")
+                "Для каждой группы нужен один эталон — папка, переименованная по шаблону. "
+                "Галочка «Эталон» стоит на самой переименованной папке группы; её можно "
+                "переставить щелчком, как и отметку «Переименовать».")
         ttk.Label(self, text=hint, foreground=self.palette["muted"], padding=(10, 0, 10, 6),
                   wraplength=1100).pack(fill="x")
 
@@ -355,17 +365,11 @@ class MainWindow(tk.Tk):
         return MARK_YES if folder.will_rename else MARK_NO
 
     def _folder_status(self, group: grouping.FolderGroup, folder: grouping.FolderInfo) -> str:
-        if folder is group.reference:
-            status = "ЭТАЛОН — готов" if folder.is_reference else "ЭТАЛОН — нужно переименовать вручную"
-        elif folder.looks_finished:
-            status = "уже названа по шаблону"
-        elif folder.partly_named:
-            # переименование начали и бросили: папку всё равно переименовываем, но это видно
-            status = "названа частично: %d из %d — будет переименована" % (folder.named, folder.count)
-        else:
-            status = ""
+        """Насколько папка переименована. Число говорит само: у готовой 100 %, у брошенной
+        на полпути — 88 %, и видно, что с ней ещё работать."""
+        status = "%d%% переименована" % _percent(folder.named_share)
         if folder.unreadable:
-            status += ("; " if status else "") + "не прочитано фото: %d" % folder.unreadable
+            status += "; не прочитано фото: %d" % folder.unreadable
         return status
 
     def render(self) -> None:

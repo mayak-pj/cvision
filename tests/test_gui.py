@@ -57,8 +57,10 @@ def test_analyze_and_render(window, project):
     assert "эталон готов" in window.tree.item(groups[0], "text")
     assert "нужно создать эталон" in window.tree.item(groups[1], "text")
     rows = folder_rows(window)
-    assert (0, os.path.join("Проект", "A", "эталон"), ("эталон", "", "6", "ЭТАЛОН — готов", "")) in rows
-    assert any(r[1].endswith("SN5") and r[2][3] == "ЭТАЛОН — нужно переименовать вручную" for r in rows)
+    assert (0, os.path.join("Проект", "A", "эталон"),
+            (gui_app.MARK_REFERENCE, "", "6", "100% переименована", "")) in rows
+    assert any(r[1].endswith("SN5") and r[2][0] == gui_app.MARK_REFERENCE
+               and r[2][3] == "0% переименована" for r in rows)
     assert any(r[1].endswith("SN2") and r[2][:2] == ("", "да") for r in rows)  # папка будет переименована
     assert "Нужно создать эталонов: 1" in window.status_var.get()
     # папка проекта запоминается
@@ -270,7 +272,7 @@ def test_every_column_reads_from_the_left(window):
 
 
 def test_partly_renamed_folder_is_marked_and_renamed(window, project):
-    """Недоделанную папку программа переименовывает, но в статусе про это предупреждает."""
+    """Недоделанную папку программа переименовывает, и в статусе видно, насколько она готова."""
     window.root_var.set(str(project))
     window.analyze()
     window.wait_for_worker()
@@ -279,6 +281,33 @@ def test_partly_renamed_folder_is_marked_and_renamed(window, project):
 
     target.named_share = 20 / 24.0      # как будто пару десятков кадров переименовали руками
     target.coverage = 0.2
-    status = window._folder_status(group, target)
-    assert "названа частично" in status and "будет переименована" in status
+    assert window._folder_status(group, target) == "83% переименована"
     assert target.will_rename and target in group.targets
+
+
+def test_hundred_percent_means_every_photo(window, project):
+    """99.6 % — это ещё не готово, поэтому 100 пишется только когда названы все."""
+    window.root_var.set(str(project))
+    window.analyze()
+    window.wait_for_worker()
+    group = window.analysis.groups[0]
+    folder = group.folders[0]
+
+    folder.named_share = 0.996
+    assert window._folder_status(group, folder) == "99% переименована"
+    folder.named_share = 1.0
+    assert window._folder_status(group, folder) == "100% переименована"
+
+
+def test_reference_mark_starts_on_the_most_renamed_folder(window, project):
+    """Галочка эталона изначально стоит на папке с самым высоким процентом."""
+    window.root_var.set(str(project))
+    window.analyze()
+    window.wait_for_worker()
+    for group in window.analysis.groups:
+        best = max(group.folders, key=lambda f: (f.named_share, f.count))
+        assert group.reference.named_share == best.named_share
+    marks = {r[1]: r[2][0] for r in folder_rows(window)}
+    for group in window.analysis.groups:
+        shown = window._display_path(group.reference.path)
+        assert marks[shown] == gui_app.MARK_REFERENCE

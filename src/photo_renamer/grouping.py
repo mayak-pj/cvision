@@ -159,11 +159,10 @@ def make_groups(folders: List[FolderInfo], labels: List[int]) -> List[FolderGrou
     groups = []
     for g in range(max(labels) + 1 if labels else 0):
         members = [f for f, label in zip(folders, labels) if label == g]
+        # эталон предлагается по самой переименованной папке группы; человек может
+        # переставить галочку на любую другую
         ready = [f for f in members if f.is_reference]
-        if ready:
-            reference = max(ready, key=lambda f: (f.named_share, f.count))
-        else:
-            reference = max(members, key=lambda f: f.count)
+        reference = max(ready or members, key=lambda f: (f.named_share, f.count))
         for folder in members:                 # насколько папка похожа по составу на эталон
             folder.coverage = coverage_of(folder, reference)
         groups.append(FolderGroup(members, reference, bool(ready)))
