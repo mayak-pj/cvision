@@ -91,6 +91,21 @@ def apply(root: tk.Misc, mode: str = "light") -> None:
                     insertcolor=palette["text"])
     style.configure("TSpinbox", fieldbackground=palette["surface"], foreground=palette["text"])
     style.configure("TMenubutton", background=palette["button"], foreground=palette["text"])
+    # В clam подпись выпадающей кнопки прижата к левому краю слоем стиля, и она выбивалась
+    # из ряда обычных кнопок с подписью по центру. «expand» отдаёт подписи всё место кнопки,
+    # а пустой «sticky» ставит её посередине. Стрелку рисует сам стиль, писать её в тексте
+    # не нужно
+    style.layout("Centered.TMenubutton", [
+        ("Menubutton.border", {"sticky": "nswe", "children": [
+            ("Menubutton.focus", {"sticky": "nswe", "children": [
+                ("Menubutton.indicator", {"side": "right", "sticky": ""}),
+                ("Menubutton.padding", {"sticky": "we", "children": [
+                    ("Menubutton.label", {"side": "left", "expand": True, "sticky": ""})]})]})]})])
+    style.configure("Centered.TMenubutton", background=palette["button"], foreground=palette["text"])
+    style.map("Centered.TMenubutton",
+              background=[("pressed", palette["button_pressed"]), ("active", palette["button_active"]),
+                          ("disabled", palette["background"])],
+              foreground=[("disabled", palette["disabled"])])
     style.configure("TProgressbar", background=palette["accent"], troughcolor=palette["heading"])
     style.configure("Treeview", background=palette["surface"], fieldbackground=palette["surface"],
                     foreground=palette["text"])
@@ -297,6 +312,21 @@ def tree_columns(tree: ttk.Treeview):
 
 def columns_width(tree: ttk.Treeview) -> int:
     return sum(tree.column(column, "width") for column in tree_columns(tree))
+
+
+def fit_columns(tree: ttk.Treeview, samples: dict, extra: int = 24) -> None:
+    """Ширина столбца — по самой длинной надписи: заголовку или образцу значения.
+
+    Задавать ширины числом нельзя: на рабочей машине шрифт крупнее, и столбец то обрезает
+    текст, то занимает место зря. «Статус» с образцом «100% переименована» получается вдвое
+    у́же прежних 230 точек, и «Сходство» помещается в окно сразу при открытии.
+    """
+    text_font = tkfont.nametofont("TkDefaultFont")
+    heading_font = tkfont.nametofont("TkHeadingFont")
+    for column, sample in samples.items():
+        needed = max(heading_font.measure(tree.heading(column, "text")),
+                     text_font.measure(sample)) + extra
+        tree.column(column, width=needed, minwidth=min(needed, tree.column(column, "minwidth")))
 
 
 def fit_column_headers(tree: ttk.Treeview, extra: int = 28) -> None:

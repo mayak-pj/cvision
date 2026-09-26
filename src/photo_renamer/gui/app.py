@@ -96,6 +96,7 @@ class MainWindow(tk.Tk):
         self._build()
         self.root_var.set(self._load_state().get("project", ""))
         self._update_buttons()
+        self.after_idle(self._widen_to_fit_columns)
         if config_warnings:
             messagebox.showwarning(TITLE, "Замечания к настройкам (config.json):\n\n" + "\n".join(config_warnings),
                                    parent=self)
@@ -153,11 +154,11 @@ class MainWindow(tk.Tk):
         # столбец, который тянут, а остальные просто сдвигаются, как в Проводнике; если они
         # перестали помещаться, внизу появляется полоса прокрутки.
         self.tree.column("#0", width=360, minwidth=180)
-        self.tree.column("reference", width=70, minwidth=60, anchor="w")
-        self.tree.column("rename", width=120, minwidth=100, anchor="w")
-        self.tree.column("count", width=60, minwidth=50, anchor="w")
-        self.tree.column("status", width=230, minwidth=120, anchor="w")
-        self.tree.column("similarity", width=110, minwidth=80, anchor="w")
+        for column in ("reference", "rename", "count", "status", "similarity"):
+            self.tree.column(column, anchor="w", minwidth=40)
+        # ширина — по самой длинной надписи, которая в столбце бывает
+        theme.fit_columns(self.tree, {"reference": MARK_REFERENCE, "rename": MARK_NO, "count": "9999",
+                                      "status": "100% переименована", "similarity": "высокое"})
         theme.fit_column_headers(self.tree)
         scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.hscroll = ttk.Scrollbar(tree_frame, orient="horizontal")
@@ -187,7 +188,7 @@ class MainWindow(tk.Tk):
         ttk.Label(side, text="Выбранная папка").pack(anchor="w", pady=(0, 4))
         self.reference_btn = ttk.Button(side, text="Сделать эталоном группы", command=self.make_reference)
         self.reference_btn.pack(fill="x", pady=2)
-        self.move_btn = ttk.Menubutton(side, text="Перенести в группу ▾")
+        self.move_btn = ttk.Menubutton(side, text="Перенести в группу", style="Centered.TMenubutton")
         self.move_menu = tk.Menu(self.move_btn, tearoff=False, postcommand=self._fill_move_menu)
         self.move_btn["menu"] = self.move_menu
         self.move_btn.pack(fill="x", pady=2)
@@ -383,6 +384,22 @@ class MainWindow(tk.Tk):
     def _on_resize(self, event) -> None:
         if event.widget is self:
             self.hint_label.configure(wraplength=max(400, event.width - 30))
+
+    def _widen_to_fit_columns(self) -> None:
+        """Раздвигает окно при открытии, чтобы столбцы поместились целиком.
+
+        Числом ширину окна не задать: на рабочей машине шрифт крупнее, и последний столбец
+        («Сходство») при открытии не влезал. Шире экрана окно не делаем и никогда не сужаем.
+        """
+        self.update_idletasks()
+        if self.winfo_width() < 400:          # окно ещё не разложено
+            return
+        scrollbar = self.tree.master.winfo_width() - self.tree.winfo_width()
+        needed = (theme.columns_width(self.tree) + scrollbar
+                  + self.reference_btn.master.winfo_width() + 30)
+        width = min(max(self.winfo_width(), needed), int(self.winfo_screenwidth() * 0.95))
+        if width > self.winfo_width():
+            self.geometry("%dx%d" % (width, self.winfo_height()))
 
     def render(self) -> None:
         selected = self._selected_folder()

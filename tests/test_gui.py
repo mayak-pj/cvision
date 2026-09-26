@@ -347,3 +347,45 @@ def test_hint_wraps_by_the_window_width(window):
         window.update()
         assert window.hint_label.cget("wraplength") <= width
         assert window.hint_label.winfo_reqwidth() <= width
+
+
+def test_all_columns_fit_when_the_window_opens(window):
+    """Замечание с мака: «Сходство» не влезало при открытии, внизу висела полоса прокрутки."""
+    from photo_renamer.gui import theme
+
+    window.deiconify()
+    window.update()
+    assert theme.columns_width(window.tree) <= window.tree.winfo_width()
+    assert not window.hscroll.winfo_ismapped()
+    assert window.tree.column("similarity", "width") >= \
+           window.tree.column("similarity", "minwidth")
+
+
+def test_status_column_is_sized_by_its_longest_value(window):
+    """«Статус» больше не занимает место зря: ширина — по «100% переименована»."""
+    from tkinter import font
+
+    text = font.nametofont("TkDefaultFont")
+    width = window.tree.column("status", "width")
+    assert width >= text.measure("100% переименована")
+    assert width <= text.measure("100% переименована") + 40
+
+
+def test_dropdown_caption_is_centred_like_other_buttons(window):
+    """«Перенести в группу» выбивалась из ряда: в clam подпись прижата к левому краю."""
+    from tkinter import ttk
+
+    assert window.move_btn.cget("style") == "Centered.TMenubutton"
+    assert "▾" not in window.move_btn.cget("text"), "стрелку рисует сам стиль"
+    layout = ttk.Style(window).layout("Centered.TMenubutton")
+
+    def label_options(items):
+        for name, options in items:
+            if name == "Menubutton.label":
+                return options
+            found = label_options(options.get("children", []))
+            if found is not None:
+                return found
+        return None
+
+    assert label_options(layout).get("expand"), "подпись должна занимать всю кнопку"
