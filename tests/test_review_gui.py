@@ -683,3 +683,55 @@ def test_report_is_shown_once_at_the_end(batch, monkeypatch):
     win.apply_folder()
     assert len(shown) == 1 and shown[0][1] == "Отчёт по группе"
     assert "Группа обработана" in shown[0][0] and "Папка:" in shown[0][0]
+
+
+def test_dragging_a_column_does_not_move_the_others(batch):
+    """Столбцы меняются поодиночке — так же, как в главном окне."""
+    win, _ = batch
+    win.geometry("1200x700")
+    win.update()
+    tree = win.tree
+    columns = ("#0",) + tuple(tree.cget("columns"))
+    before = {name: tree.column(name, "width") for name in columns}
+
+    border = before["#0"] + before["new"]
+    tree.event_generate("<ButtonPress-1>", x=border, y=8, when="now")
+    tree.event_generate("<B1-Motion>", x=border + 50, y=8, when="now")
+    tree.event_generate("<ButtonRelease-1>", x=border + 50, y=8, when="now")
+    win.update()
+
+    after = {name: tree.column(name, "width") for name in columns}
+    assert after["new"] > before["new"], "столбец, который тянули, не изменился"
+    assert {n: after[n] for n in columns if n != "new"} == {n: before[n] for n in columns if n != "new"}
+
+
+def test_horizontal_scrollbar_appears_only_when_needed(batch):
+    win, _ = batch
+    win.geometry("1600x700")
+    win.update()
+    win._update_hscroll()
+    assert not win.hscroll.winfo_ismapped()
+
+    win.tree.column("status", width=1200)
+    win._update_hscroll()
+    win.update()
+    assert win.hscroll.winfo_ismapped()
+
+
+def test_columns_are_not_narrower_than_their_headings(batch):
+    """Заголовок со значком сортировки тоже должен помещаться."""
+    from tkinter import font
+
+    win, _ = batch
+    win.sort_by("confidence")            # к подписи добавляется стрелка
+    win.update()
+    heading_font = font.nametofont("TkHeadingFont")
+    for name in ("#0",) + tuple(win.tree.cget("columns")):
+        title = win.tree.heading(name, "text")
+        assert win.tree.column(name, "width") >= heading_font.measure(title), title
+
+
+def test_every_column_reads_from_the_left(batch):
+    win, _ = batch
+    for name in win.tree.cget("columns"):
+        assert str(win.tree.column(name, "anchor")) == "w", name

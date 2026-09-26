@@ -138,15 +138,24 @@ class BatchWindow(tk.Toplevel):
             self.tree.heading(column, text=title, command=lambda c=column: self.sort_by(c))
         self._show_sort_marks()
         # ширины столбцов заданы скромно: иначе таблица запрашивает больше места, чем есть,
-        # и сжимает правую колонку со списком категорий. Границы столбцов можно тянуть мышью
-        self.tree.column("new", width=280)
-        self.tree.column("confidence", width=90, anchor="e", stretch=False)
-        self.tree.column("status", width=150, stretch=False)
+        # и сжимает правую колонку со списком категорий. Границы столбцов можно тянуть мышью:
+        # ни один столбец не растягивается, поэтому меняется только тот, который тянут,
+        # а если столбцы перестали помещаться, снизу появляется полоса прокрутки.
+        # Значения прижаты к левому краю — строка читается слева направо.
+        self.tree.column("new", width=280, minwidth=120, anchor="w")
+        self.tree.column("confidence", width=90, minwidth=70, anchor="w")
+        self.tree.column("status", width=150, minwidth=90, anchor="w")
         self._apply_thumb_size()
+        theme.fit_column_headers(self.tree)
         scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
+        self.hscroll = ttk.Scrollbar(table, orient="horizontal")
         self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="left", fill="y")
+        table.rowconfigure(0, weight=1)
+        table.columnconfigure(0, weight=1)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.hscroll.grid(row=1, column=0, sticky="ew")
+        self._update_hscroll = theme.fixed_columns(self.tree, self.hscroll)
         palette = theme.colors()
         self.tree.tag_configure("doubt", foreground=palette["warning"])
         self.tree.tag_configure("manual", foreground=palette["accent"])
@@ -314,6 +323,7 @@ class BatchWindow(tk.Toplevel):
         arrow = " ↑" if not self.sort_reverse else " ↓"
         for column, title in self.COLUMN_TITLES:
             self.tree.heading(column, text=title + (arrow if column == self.sort_column else ""))
+        theme.fit_column_headers(self.tree)
 
     def _display_photos(self) -> List:
         """Фото в порядке показа. Порядок задаётся сортировкой и держится до следующей."""
@@ -365,7 +375,9 @@ class BatchWindow(tk.Toplevel):
 
     def _apply_thumb_size(self) -> None:
         self.style.configure("Review.Treeview", rowheight=self.thumb_size + 8)
-        self.tree.column("#0", width=self.thumb_size + 200)
+        self.tree.column("#0", width=self.thumb_size + 200, minwidth=120)
+        if getattr(self, "_update_hscroll", None):   # размер фото меняет ширину первого столбца
+            self._update_hscroll()
 
     def set_thumb_size(self, size: int) -> None:
         """Размер фото в строках таблицы. Миниатюры перерисовываются из кэша, файлы не перечитываются."""

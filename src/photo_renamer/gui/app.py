@@ -139,23 +139,22 @@ class MainWindow(tk.Tk):
         # которую никто не трогал (замечание с рабочей машины). Теперь меняется только тот
         # столбец, который тянут, а остальные просто сдвигаются, как в Проводнике; если они
         # перестали помещаться, внизу появляется полоса прокрутки.
-        self.tree.column("#0", width=360, minwidth=180, stretch=False)
-        self.tree.column("reference", width=70, minwidth=60, anchor="w", stretch=False)
-        self.tree.column("rename", width=120, minwidth=100, anchor="w", stretch=False)
-        self.tree.column("count", width=60, minwidth=50, anchor="w", stretch=False)
-        self.tree.column("status", width=230, minwidth=120, anchor="w", stretch=False)
-        self.tree.column("similarity", width=110, minwidth=80, anchor="w", stretch=False)
-        self._fit_column_headers()
+        self.tree.column("#0", width=360, minwidth=180)
+        self.tree.column("reference", width=70, minwidth=60, anchor="w")
+        self.tree.column("rename", width=120, minwidth=100, anchor="w")
+        self.tree.column("count", width=60, minwidth=50, anchor="w")
+        self.tree.column("status", width=230, minwidth=120, anchor="w")
+        self.tree.column("similarity", width=110, minwidth=80, anchor="w")
+        theme.fit_column_headers(self.tree)
         scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        self.hscroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=self.hscroll.set)
+        self.hscroll = ttk.Scrollbar(tree_frame, orient="horizontal")
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
         self.tree.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
-        self.tree.bind("<Configure>", lambda e: self._update_hscroll())
-        # после того как границу столбца отпустили, ширины уже новые — можно решать про полосу
-        self.tree.bind("<ButtonRelease-1>", lambda e: self.after_idle(self._update_hscroll), add="+")
+        self.hscroll.grid(row=1, column=0, sticky="ew")
+        self._update_hscroll = theme.fixed_columns(self.tree, self.hscroll)
+        self._update_hscroll()
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
         self.tree.bind("<Double-1>", self._on_double_click)
         self.tree.bind("<Button-1>", self._on_click)
@@ -365,27 +364,6 @@ class MainWindow(tk.Tk):
         if folder.unreadable:
             status += ("; " if status else "") + "не прочитано фото: %d" % folder.unreadable
         return status
-
-    def _fit_column_headers(self) -> None:
-        """Столбец не бывает уже своего заголовка.
-
-        На рабочей машине шрифт крупнее, и подписи обрезались («Сходство с э…»).
-        """
-        heading_font = font.nametofont("TkHeadingFont")
-        for column in ("#0",) + self.tree.cget("columns"):
-            needed = heading_font.measure(self.tree.heading(column, "text")) + 28
-            self.tree.column(column,
-                             width=max(self.tree.column(column, "width"), needed),
-                             minwidth=max(self.tree.column(column, "minwidth"), needed))
-
-    def _update_hscroll(self) -> None:
-        """Полоса прокрутки внизу нужна, только если столбцы перестали помещаться."""
-        total = sum(self.tree.column(column, "width")
-                    for column in ("#0",) + self.tree.cget("columns"))
-        if total > self.tree.winfo_width():
-            self.hscroll.grid(row=1, column=0, sticky="ew")
-        else:
-            self.hscroll.grid_remove()
 
     def render(self) -> None:
         selected = self._selected_folder()

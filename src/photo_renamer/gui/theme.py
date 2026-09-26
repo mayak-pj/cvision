@@ -7,7 +7,7 @@
 
 import sys
 import tkinter as tk
-from tkinter import ttk
+from tkinter import font as tkfont, ttk
 
 LIGHT = {
     "background": "#F4F5F7",     # фон окон и панелей
@@ -283,6 +283,56 @@ def apply_to_existing(widget: tk.Misc, mode: str = None) -> None:
         except tk.TclError:
             pass
         apply_to_existing(child, mode)
+
+
+def tree_columns(tree: ttk.Treeview):
+    """Все столбцы таблицы, включая первый («#0»)."""
+    return ("#0",) + tuple(tree.cget("columns"))
+
+
+def columns_width(tree: ttk.Treeview) -> int:
+    return sum(tree.column(column, "width") for column in tree_columns(tree))
+
+
+def fit_column_headers(tree: ttk.Treeview, extra: int = 28) -> None:
+    """Столбец не бывает уже своего заголовка.
+
+    На рабочей машине шрифт крупнее, и подписи обрезались («Сходство с э…»). extra — запас
+    на отступы и значок сортировки.
+    """
+    heading_font = tkfont.nametofont("TkHeadingFont")
+    for column in tree_columns(tree):
+        needed = heading_font.measure(tree.heading(column, "text")) + extra
+        tree.column(column,
+                    width=max(tree.column(column, "width"), needed),
+                    minwidth=max(tree.column(column, "minwidth"), needed))
+
+
+def fixed_columns(tree: ttk.Treeview, hscroll: ttk.Scrollbar, on_change=None) -> None:
+    """Столбцы меняют ширину поодиночке, а не за счёт соседей.
+
+    Tk, меняя ширину столбца, забирает разницу у растяжимого: потянешь границу одного —
+    ужмётся другой, которого никто не трогал (замечание с рабочей машины «столбцы
+    неестественно уезжают»). Поэтому не растягивается ни один, а если столбцы перестают
+    помещаться, снизу появляется полоса прокрутки — как в Проводнике.
+    """
+    for column in tree_columns(tree):
+        tree.column(column, stretch=False)
+    tree.configure(xscrollcommand=hscroll.set)
+    hscroll.configure(command=tree.xview)
+
+    def update(_event=None):
+        if columns_width(tree) > tree.winfo_width():
+            hscroll.grid()
+        else:
+            hscroll.grid_remove()
+        if on_change:
+            on_change()
+
+    tree.bind("<Configure>", lambda e: update(), add="+")
+    # ширины становятся новыми, только когда границу отпустили
+    tree.bind("<ButtonRelease-1>", lambda e: tree.after_idle(update), add="+")
+    return update
 
 
 class IconButton(tk.Canvas):
