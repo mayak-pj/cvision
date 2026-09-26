@@ -313,20 +313,35 @@ def fit_column_headers(tree: ttk.Treeview, extra: int = 28) -> None:
                     minwidth=max(tree.column(column, "minwidth"), needed))
 
 
-def fixed_columns(tree: ttk.Treeview, hscroll: ttk.Scrollbar, on_change=None) -> None:
-    """Столбцы меняют ширину поодиночке, а не за счёт соседей.
+def fixed_columns(tree: ttk.Treeview, hscroll: ttk.Scrollbar, on_change=None):
+    """Столбцы меняют ширину поодиночке, а последний добирает свободное место.
 
     Tk, меняя ширину столбца, забирает разницу у растяжимого: потянешь границу одного —
     ужмётся другой, которого никто не трогал (замечание с рабочей машины «столбцы
-    неестественно уезжают»). Поэтому не растягивается ни один, а если столбцы перестают
-    помещаться, снизу появляется полоса прокрутки — как в Проводнике.
+    неестественно уезжают»). Поэтому не растягивается ни один.
+
+    Но тогда справа остаётся ничья пустая полоса, а пустого места в таблице быть не должно.
+    Её добирает последний столбец: у него короткие значения, и его ширина ни на что не влияет,
+    зато пропадает и полоса, и вопрос «кто съел место». Если последний столбец потянули руками,
+    его ширину запоминаем и меньше неё не делаем. Не помещаются столбцы — снизу появляется
+    полоса прокрутки, как в Проводнике.
     """
-    for column in tree_columns(tree):
+    columns = tree_columns(tree)
+    last = columns[-1]
+    for column in columns:
         tree.column(column, stretch=False)
     tree.configure(xscrollcommand=hscroll.set)
     hscroll.configure(command=tree.xview)
+    state = {"own": tree.column(last, "width"), "set": None}
 
     def update(_event=None):
+        width = tree.column(last, "width")
+        if state["set"] is not None and width != state["set"]:
+            state["own"] = width                   # последний столбец потянули руками
+        free = tree.winfo_width() - (columns_width(tree) - width)
+        state["set"] = max(state["own"], tree.column(last, "minwidth"), free)
+        if state["set"] != width:
+            tree.column(last, width=state["set"])
         if columns_width(tree) > tree.winfo_width():
             hscroll.grid()
         else:

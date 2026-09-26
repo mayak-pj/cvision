@@ -123,8 +123,7 @@ class BatchWindow(tk.Toplevel):
         body = ttk.Frame(self, padding=(10, 0, 10, 0))
         body.pack(fill="both", expand=True)
 
-        table = ttk.Frame(body)
-        table.pack(side="left", fill="both", expand=True)
+        table = ttk.Frame(body)        # размещается после правой панели, см. ниже
         self.style = ttk.Style(self)
         # текст вариантов прижат к левому краю: номера 1, 2 и 3 оказываются друг под другом
         self.style.configure("Candidate.TButton", anchor="w")
@@ -137,8 +136,7 @@ class BatchWindow(tk.Toplevel):
         for column, title in self.COLUMN_TITLES:
             self.tree.heading(column, text=title, command=lambda c=column: self.sort_by(c))
         self._show_sort_marks()
-        # ширины столбцов заданы скромно: иначе таблица запрашивает больше места, чем есть,
-        # и сжимает правую колонку со списком категорий. Границы столбцов можно тянуть мышью:
+        # Границы столбцов можно тянуть мышью:
         # ни один столбец не растягивается, поэтому меняется только тот, который тянут,
         # а если столбцы перестали помещаться, снизу появляется полоса прокрутки.
         # Значения прижаты к левому краю — строка читается слева направо.
@@ -178,8 +176,10 @@ class BatchWindow(tk.Toplevel):
         self._bind_undo(self.tree)
         self._bind_undo(self)
 
+        # Правая панель размещается ДО таблицы: при нехватке места Tk ужимает то, что
+        # размещено позже, и раньше таблица съедала ширину у списка категорий
         self.side = side = ttk.Frame(body, padding=(10, 0, 0, 0))
-        side.pack(side="left", fill="y")
+        side.pack(side="right", fill="y")
         side.pack_propagate(False)      # ширину задаём сами — по длине названий категорий
 
         self.candidates_frame = ttk.Frame(side)
@@ -218,6 +218,8 @@ class BatchWindow(tk.Toplevel):
         self.categories_list.bind("<<ListboxSelect>>", lambda e: self._show_sides(force=True))
         for widget in (self.categories_list, search_entry):   # отмена работает, где бы ни был курсор
             self._bind_undo(widget)
+
+        table.pack(side="left", fill="both", expand=True)
 
     # --- ход обработки ------------------------------------------------------------------
 

@@ -702,7 +702,10 @@ def test_dragging_a_column_does_not_move_the_others(batch):
 
     after = {name: tree.column(name, "width") for name in columns}
     assert after["new"] > before["new"], "столбец, который тянули, не изменился"
-    assert {n: after[n] for n in columns if n != "new"} == {n: before[n] for n in columns if n != "new"}
+    # последний столбец — добивка: он забирает свободное место, чтобы справа не было пустоты
+    untouched = [name for name in columns if name not in ("new", "status")]
+    assert {name: after[name] for name in untouched} == \
+           {name: before[name] for name in untouched}
 
 
 def test_horizontal_scrollbar_appears_only_when_needed(batch):

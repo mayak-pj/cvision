@@ -237,8 +237,10 @@ def test_dragging_a_column_does_not_move_the_others(window):
 
     after = {name: tree.column(name, "width") for name in columns}
     assert after["count"] > before["count"], "столбец, который тянули, не изменился"
-    assert {name: after[name] for name in columns if name != "count"} == \
-           {name: before[name] for name in columns if name != "count"}
+    # последний столбец — добивка: он забирает свободное место, чтобы справа не было пустоты
+    untouched = [name for name in columns if name not in ("count", "similarity")]
+    assert {name: after[name] for name in untouched} == \
+           {name: before[name] for name in untouched}
 
 
 def test_horizontal_scrollbar_appears_only_when_needed(window):
@@ -311,3 +313,37 @@ def test_reference_mark_starts_on_the_most_renamed_folder(window, project):
     for group in window.analysis.groups:
         shown = window._display_path(group.reference.path)
         assert marks[shown] == gui_app.MARK_REFERENCE
+
+
+def test_no_empty_space_to_the_right_of_the_columns(window):
+    """Замечание с мака: справа в таблице оставалась ничья пустая полоса."""
+    from photo_renamer.gui import theme
+
+    window.deiconify()
+    for width in (1400, 1800, 2200):
+        window.geometry("%dx700" % width)
+        window.update()
+        assert theme.columns_width(window.tree) == window.tree.winfo_width(), width
+        assert not window.hscroll.winfo_ismapped(), width
+
+
+def test_side_panel_keeps_its_buttons_readable(window):
+    """И там же: надписи на кнопках справа обрезались («Сделать эталоном груг»)."""
+    window.deiconify()
+    buttons = (window.reference_btn, window.move_btn, window.open_btn,
+               window.edit_reference_btn, window.rename_group_btn, window.refresh_btn)
+    for width in (1100, 1400, 2200):
+        window.geometry("%dx700" % width)
+        window.update()
+        cut = [b.cget("text") for b in buttons if b.winfo_width() < b.winfo_reqwidth()]
+        assert not cut, "при ширине %d обрезаны: %s" % (width, cut)
+
+
+def test_hint_wraps_by_the_window_width(window):
+    """Подсказка вверху не должна уходить за край узкого окна."""
+    window.deiconify()
+    for width in (900, 1600):
+        window.geometry("%dx700" % width)
+        window.update()
+        assert window.hint_label.cget("wraplength") <= width
+        assert window.hint_label.winfo_reqwidth() <= width

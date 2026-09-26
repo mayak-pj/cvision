@@ -123,14 +123,17 @@ class MainWindow(tk.Tk):
                 "Для каждой группы нужен один эталон — папка, переименованная по шаблону. "
                 "Галочка «Эталон» стоит на самой переименованной папке группы; её можно "
                 "переставить щелчком, как и отметку «Переименовать».")
-        ttk.Label(self, text=hint, foreground=self.palette["muted"], padding=(10, 0, 10, 6),
-                  wraplength=1100).pack(fill="x")
+        # перенос по ширине окна, а не по заданному числу: иначе на узком окне подсказка
+        # уходит за край, а на широком переносится там, где место ещё есть
+        self.hint_label = ttk.Label(self, text=hint, foreground=self.palette["muted"],
+                                    padding=(10, 0, 10, 6), wraplength=1100)
+        self.hint_label.pack(fill="x")
+        self.bind("<Configure>", self._on_resize)
 
         middle = ttk.Frame(self, padding=(10, 0, 10, 0))
         middle.pack(fill="both", expand=True)
 
-        tree_frame = ttk.Frame(middle)
-        tree_frame.pack(side="left", fill="both", expand=True)
+        tree_frame = ttk.Frame(middle)     # размещается после правой панели, см. ниже
         self.tree = ttk.Treeview(tree_frame, columns=("reference", "rename", "count", "status", "similarity"),
                                  selectmode="browse")
         # Заголовки прижаты к тому же краю, что и значения: иначе подпись столбца стоит над
@@ -176,8 +179,11 @@ class MainWindow(tk.Tk):
         self.tree.tag_configure("not_ready", foreground=self.palette["warning"])
         self.tree.tag_configure("low", foreground=self.palette["error"])
 
+        # Правая панель размещается ДО таблицы и получает ширину по самой длинной надписи
+        # на кнопке. Иначе таблица забирала место себе, а надписи на кнопках обрезались
+        # («Сделать эталоном груг»): при нехватке места Tk ужимает то, что размещено позже.
         side = ttk.Frame(middle, padding=(10, 0, 0, 0))
-        side.pack(side="left", fill="y")
+        side.pack(side="right", fill="y")
         ttk.Label(side, text="Выбранная папка").pack(anchor="w", pady=(0, 4))
         self.reference_btn = ttk.Button(side, text="Сделать эталоном группы", command=self.make_reference)
         self.reference_btn.pack(fill="x", pady=2)
@@ -196,6 +202,8 @@ class MainWindow(tk.Tk):
         ttk.Separator(side).pack(fill="x", pady=10)
         self.refresh_btn = ttk.Button(side, text="Обновить имена файлов", command=self.refresh)
         self.refresh_btn.pack(fill="x", pady=2)
+
+        tree_frame.pack(side="left", fill="both", expand=True)
 
         bottom = ttk.Frame(self, padding=(10, 6, 10, 10))
         bottom.pack(fill="x")
@@ -371,6 +379,10 @@ class MainWindow(tk.Tk):
         if folder.unreadable:
             status += "; не прочитано фото: %d" % folder.unreadable
         return status
+
+    def _on_resize(self, event) -> None:
+        if event.widget is self:
+            self.hint_label.configure(wraplength=max(400, event.width - 30))
 
     def render(self) -> None:
         selected = self._selected_folder()
