@@ -7,7 +7,7 @@ import pytest
 tk = pytest.importorskip("tkinter")
 
 from photo_renamer import config as cfg  # noqa: E402
-from photo_renamer.gui import editor as editor_mod  # noqa: E402
+from photo_renamer.gui import editor as editor_mod, theme as theme_mod  # noqa: E402
 from photo_renamer.names import NamesList  # noqa: E402
 from test_grouping import shoot  # noqa: E402
 
@@ -32,7 +32,12 @@ def editor(tmp_path, monkeypatch):
         pytest.skip("нет графической среды: %s" % exc)
     root.withdraw()
     win = editor_mod.ReferenceEditor(root, str(folder), config, names)
-    win.withdraw()
+    # окно остаётся «показанным» и с фокусом, иначе до него не дойдут нажатия клавиш.
+    # На экране его всё равно нет: conftest делает окна прозрачными и запрещает процессу
+    # выходить на передний план
+    win.deiconify()
+    win.update()
+    win.focus_force()
     win.update()
     yield win, folder, names
     win.log.close()
@@ -175,3 +180,167 @@ def test_editor_answers_clicks_while_thumbnails_load(editor, monkeypatch):
     assert clicks and time.perf_counter() - started < 0.2
     win.worker.cancel()
     win.worker.wait(5)
+
+
+def test_double_click_opens_the_photo_large(editor, monkeypatch):
+    """Двойной клик по миниатюре показывает фото крупно.
+
+    Раньше LargeView в редакторе не был импортирован, и двойной клик падал с NameError.
+    """
+    win, folder, _ = editor
+    opened = []
+    monkeypatch.setattr(editor_mod, "LargeView",
+                        lambda master, path, photos, index, cache: opened.append((path, photos[index])))
+    x0, y0, x1, y1 = win.grid_widget._cell_box(0)
+    win.grid_widget._on_double(type("Event", (), {"x": (x0 + x1) // 2, "y": (y0 + y1) // 2})())
+    assert opened == [(str(folder), win.photos[0])]
+    win._open_large(2)
+    assert opened[-1] == (str(folder), win.photos[2])
+
+
+def test_add_category_without_a_dialog(editor):
+    """Набрано в поиске, нажат «+» — категория добавлена сразу, без окна с «ОК»."""
+    win, _, names = editor
+    win.search_var.set("Планка индикации")
+    win.sides_var.set(2)
+    win.add_name()
+    assert "Планка индикации" in names.names()
+    assert names.sides_for("Планка индикации") == 2
+    assert win.search_var.get() == ""                    # поиск очищен, видно весь список
+    assert win.current_name() == "Планка индикации"      # и новая категория уже выбрана
+    assert "Планка индикации" in NamesList(names.path).names()   # записано в файл
+
+
+def test_add_category_with_empty_search_only_hints(editor):
+    win, _, names = editor
+    before = list(names.names())
+    win.search_var.set("  ")
+    win.add_name()
+    assert names.names() == before
+    assert "Наберите название" in win.status_var.get()
+
+
+def test_ctrl_s_renames_selected(editor):
+    """Ctrl+S делает то же, что кнопка «Переименовать выделенные»."""
+    from photo_renamer.gui import theme
+
+    win, folder, _ = editor
+    assert theme.shortcut_label(win, "s") in win.rename_btn.cget("text")
+    pick_name(win, "Кулер")
+    win.grid_widget.select_all()
+    win.update()
+    win.event_generate("<Control-s>", when="now")
+    win.update()
+    assert any(name.startswith("Кулер") for name in os.listdir(str(folder)))
+
+
+def test_ctrl_s_works_in_russian_layout(editor):
+    """В русской раскладке приходит «Ctrl+ы» — сочетание всё равно срабатывает."""
+    win, folder, _ = editor
+    pick_name(win, "Кулер")
+    win.grid_widget.select_all()
+    win.update()
+    win.event_generate("<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004, when="now")
+    win.update()
+    assert any(name.startswith("Кулер") for name in os.listdir(str(folder)))
+
+
+def test_command_and_russian_layout_shortcuts(editor):
+    """macOS: то же сочетание нажимают Command; в русской раскладке приходит «⌘ы»/«Ctrl+я»."""
+    win, folder, _ = editor
+    pick_name(win, "Кулер")
+    win.grid_widget.select_all()
+    win.update()
+    win.event_generate("<Command-s>", when="now")
+    win.update()
+    assert any(name.startswith("Кулер") for name in os.listdir(str(folder)))
+
+    win.event_generate("<Command-KeyPress>", keysym="Cyrillic_ya", state=0x0008, when="now")
+    win.update()
+    assert not any(name.startswith("Кулер") for name in os.listdir(str(folder))), "Cmd+я не отменил"
+
+
+def test_shortcut_label_matches_the_system(editor):
+    from photo_renamer.gui import theme
+
+    win, _, _ = editor
+    aqua = win.tk.call("tk", "windowingsystem") == "aqua"
+    assert theme.shortcut_label(win, "s") == ("\u2318S" if aqua else "Ctrl+S")
+
+
+def test_renamed_photos_are_grouped_but_numbered_by_shooting_order(editor):
+    """Показ — по именам (экземпляры рядом), нумерация — по съёмке (порядок съёмки не меняется)."""
+    win, folder, _ = editor
+    shot_order = list(win.photos)
+    pick_name(win, "Кулер")                       # один ракурс
+    win.grid_widget.set_selection([0, 4])         # первое и пятое фото по съёмке
+    win.rename_selected()
+
+    assert win.photos[0] == "Кулер 1.JPG" and win.photos[4] == "Кулер 2.JPG"
+    assert [name for name in win.photos if not name.startswith("Кулер")] == \
+           [name for name in shot_order if name not in (shot_order[0], shot_order[4])]
+    assert win.shown[:2] == ["Кулер 1.JPG", "Кулер 2.JPG"]          # в сетке стоят рядом
+    assert win.shown[2:] == [shot_order[i] for i in (1, 2, 3, 5)]   # остальные — по съёмке
+    assert [name for name, _ in win.grid_widget.items] == win.shown
+
+
+def test_second_category_keeps_its_own_instances_together(editor):
+    """После первого переименования сетка уже переставлена: неназванные — в конце."""
+    win, folder, _ = editor
+    pick_name(win, "Вентилятор")
+    win.grid_widget.set_selection([1, 5])
+    win.rename_selected()
+    assert win.shown[:2] == ["Вентилятор 1.JPG", "Вентилятор 2.JPG"]
+
+    pick_name(win, "Кулер")
+    win.grid_widget.set_selection([2])            # первое из оставшихся неназванных
+    win.rename_selected()
+    assert win.shown[:3] == ["Вентилятор 1.JPG", "Вентилятор 2.JPG", "Кулер.JPG"]
+    assert all(not is_named(name) for name in win.shown[3:])
+
+
+def is_named(name):
+    from photo_renamer.reference import is_template_name
+
+    return is_template_name(name)
+
+
+def test_reorder_keeps_thumbnails_and_selection_by_name(editor):
+    """Перестановка не перечитывает миниатюры и не теряет выделение."""
+    win, _, _ = editor
+    win.worker.wait(30)
+    win.update()
+    assert all(image for image in win.grid_widget._images)
+    pick_name(win, "Кулер")
+    win.grid_widget.set_selection([0, 4])
+    win.rename_selected()
+    win.update()
+    assert all(image for image in win.grid_widget._images), "миниатюры пропали после перестановки"
+    assert win.grid_widget._pending == len(win.photos)
+
+
+PASTE_KEYS = [
+    ("латиница", "<Control-v>", {}),
+    ("русская раскладка", "<Control-KeyPress>", dict(keysym="Cyrillic_em", state=0x0004)),
+    ("Windows: по коду клавиши", "<Control-KeyPress>", dict(keycode=86, state=0x0004)),
+]
+if theme_mod.COMMAND_IS_A_SHORTCUT:
+    PASTE_KEYS += [
+        ("macOS ⌘V", "<Command-v>", {}),
+        ("macOS ⌘м", "<Command-KeyPress>", dict(keysym="Cyrillic_em", state=0x0008)),
+    ]
+
+
+@pytest.mark.parametrize("label, sequence, event", PASTE_KEYS)
+def test_paste_into_the_category_field(editor, label, sequence, event):
+    """Замечание с рабочей машины и с мака: в поле категории не вставлялось из буфера."""
+    win, _, _ = editor
+    theme_mod.install_clipboard_keys(win)
+    win.clipboard_clear()
+    win.clipboard_append("Плата управления")
+    win.search_var.set("")
+    win.search_entry.focus_set()
+    win.update()
+    win.search_entry.event_generate(sequence, when="now", **event)
+    win.update()
+    assert win.search_var.get() == "Плата управления", label

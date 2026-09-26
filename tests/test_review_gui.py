@@ -41,7 +41,11 @@ def batch(tmp_path, monkeypatch):
         pytest.skip("нет графической среды: %s" % exc)
     root.withdraw()
     win = review_mod.BatchWindow(root, group, config)
-    win.withdraw()
+    # окно остаётся «показанным» и с фокусом, иначе до него не дойдут нажатия клавиш.
+    # На экране его нет: conftest делает окна прозрачными и не даёт процессу выйти вперёд
+    win.deiconify()
+    win.update()
+    win.focus_force()
     win.start()
     yield win, root_dir
     win.log.close()
@@ -285,8 +289,9 @@ def test_add_and_remove_category(batch, monkeypatch, tmp_path):
     win, _ = batch
     reference_count = len(win.reference_categories)
 
-    monkeypatch.setattr(review_mod.simpledialog, "askstring", lambda *a, **k: "Планка индикации")
+    win.search_var.set("Планка индикации")      # набрано в поиске, отдельного окна с «ОК» нет
     win.add_category()
+    assert win.search_var.get() == ""
     assert "Планка индикации" in win.categories
     assert len(win.categories) == reference_count + 1
 
@@ -304,6 +309,33 @@ def test_add_and_remove_category(batch, monkeypatch, tmp_path):
     win._select_category("Планка индикации")
     win.remove_category()
     assert "Планка индикации" not in win.categories
+
+
+def test_paste_into_the_category_field(batch):
+    """В окне переименования поле категории такое же: вставка должна работать и в нём."""
+    from photo_renamer.gui import theme
+
+    win, _ = batch
+    theme.install_clipboard_keys(win)
+    win.clipboard_clear()
+    win.clipboard_append("Плата управления")
+    win.search_var.set("")
+    win.search_entry.focus_set()
+    win.update()
+    win.search_entry.event_generate("<Control-KeyPress>", keysym="Cyrillic_em", state=0x0004,
+                                    when="now")
+    win.update()
+    assert win.search_var.get() == "Плата управления"
+
+
+def test_add_category_with_empty_search_only_hints(batch):
+    """Пустое поле — подсказка в строке состояния, а не пустая категория в списке."""
+    win, _ = batch
+    before = list(win.categories)
+    win.search_var.set("   ")
+    win.add_category()
+    assert win.categories == before
+    assert "Наберите название" in win.status_var.get()
 
 
 def test_reference_category_is_not_removed(batch, monkeypatch):
@@ -336,7 +368,7 @@ def test_added_category_survives_restart(batch, monkeypatch):
     win, _ = batch
     from photo_renamer.names import NamesList
 
-    monkeypatch.setattr(review_mod.simpledialog, "askstring", lambda *a, **k: "Съемный накопитель HDD")
+    win.search_var.set("Съемный накопитель HDD")
     win.add_category()
     again = NamesList(win.app_config.names_path())
     assert "Съемный накопитель HDD" in again.names()
