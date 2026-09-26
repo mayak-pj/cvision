@@ -12,7 +12,7 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Set
 
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
@@ -22,9 +22,14 @@ from . import features as feat
 from .reference import category_key, is_template_name, parse_name
 from .scanner import FolderScan, ScanError, find_photo_folders, list_photos
 
-REFERENCE_SHARE = 0.9       # доля фото с именами по шаблону, чтобы папка считалась эталоном
+REFERENCE_SHARE = 0.9       # доля фото с именами по шаблону, чтобы папка годилась в эталоны
 REFERENCE_MIN_CATEGORIES = 3  # ...и разных категорий не меньше этого (и не меньше 5% от числа фото):
                               # иначе это общая нумерация вроде «File 1», «File 2», а не эталон
+# Доля деталей эталона, которые должны найтись в папке, чтобы считать её уже названной.
+# Одной доли названных фото мало: в папке, где переименовали пару десятков кадров из двух-трёх
+# деталей, эта доля тоже бывает высокой, и папка выпадала из переименования (замечание
+# с рабочей машины про 1003). Набор деталей такую папку от готовой отличает сразу.
+FINISHED_COVERAGE = 0.9
 
 
 @dataclass
@@ -34,6 +39,8 @@ class FolderInfo:
     categories: int = 0       # число разных категорий среди этих имён
     unreadable: int = 0
     include: Optional[bool] = None   # выбор пользователя: переименовывать папку или нет
+    vocabulary: Set[str] = field(default_factory=set)   # какие детали названы в папке
+    coverage: float = 0.0     # доля деталей эталона, которые в папке нашлись (ставит make_groups)
 
     @property
     def path(self) -> str:
@@ -44,15 +51,36 @@ class FolderInfo:
         return len(self.scan.photos)
 
     @property
+    def named(self) -> int:
+        return round(self.named_share * self.count)
+
+    @property
     def is_reference(self) -> bool:
+        """Годится ли папка в эталоны группы: названа почти целиком и деталей в ней много."""
         return (self.count > 0 and self.named_share >= REFERENCE_SHARE
                 and self.categories >= max(REFERENCE_MIN_CATEGORIES, 0.05 * self.count))
 
     @property
+    def looks_finished(self) -> bool:
+        """Папка уже названа — переименовывать её незачем.
+
+        Мало того, что названо почти всё: в папке должны найтись почти все детали эталона.
+        Иначе папка, где переименовали пару десятков кадров одной-двух деталей, считалась
+        готовой и выпадала из работы, хотя названа едва ли наполовину.
+        """
+        return (self.count > 0 and self.named_share >= REFERENCE_SHARE
+                and self.coverage >= FINISHED_COVERAGE)
+
+    @property
+    def partly_named(self) -> bool:
+        """Переименование в папке начали, но не закончили — про это стоит предупредить."""
+        return 0 < self.named < self.count and not self.looks_finished
+
+    @property
     def will_rename(self) -> bool:
-        """Попадёт ли папка в переименование. По умолчанию — все, кроме уже названных по шаблону,
+        """Попадёт ли папка в переименование. По умолчанию — все, кроме уже названных,
         но решение программы можно переменить: отметку в окне анализа ставит человек."""
-        return (not self.is_reference) if self.include is None else self.include
+        return (not self.looks_finished) if self.include is None else self.include
 
 
 @dataclass
@@ -89,7 +117,8 @@ def folder_info(scan: FolderScan) -> FolderInfo:
     named = [name for name in scan.photos if is_template_name(name)]
     categories = {_vocabulary_key(parse_name(name).category) for name in named}
     categories.discard("")
-    return FolderInfo(scan, len(named) / max(len(scan.photos), 1), len(categories))
+    return FolderInfo(scan, len(named) / max(len(scan.photos), 1), len(categories),
+                      vocabulary=categories)
 
 
 def folder_distances(folder_features: Sequence[Sequence[feat.Features]], extractor: feat.FeatureExtractor,
@@ -135,8 +164,19 @@ def make_groups(folders: List[FolderInfo], labels: List[int]) -> List[FolderGrou
             reference = max(ready, key=lambda f: (f.named_share, f.count))
         else:
             reference = max(members, key=lambda f: f.count)
+        for folder in members:                 # насколько папка похожа по составу на эталон
+            folder.coverage = coverage_of(folder, reference)
         groups.append(FolderGroup(members, reference, bool(ready)))
     return groups
+
+
+def coverage_of(folder: FolderInfo, reference: FolderInfo) -> float:
+    """Доля деталей эталона, которые нашлись в папке. У самого эталона — 1."""
+    if folder is reference:
+        return 1.0
+    if not reference.vocabulary:
+        return 0.0
+    return len(folder.vocabulary & reference.vocabulary) / len(reference.vocabulary)
 
 
 def analyze_project(
@@ -267,7 +307,14 @@ def describe(analysis: ProjectAnalysis) -> str:
         status = "готовый эталон" if g.reference_is_ready else "нужно переименовать вручную"
         lines.append("Группа %d (%d папок). Эталон: %s — %s" % (k, len(g.folders), g.reference.path, status))
         for f in g.folders:
-            mark = "  [эталон]" if f is g.reference else ("  [уже по шаблону]" if f.is_reference else "")
+            if f is g.reference:
+                mark = "  [эталон]"
+            elif f.looks_finished:
+                mark = "  [уже названа]"
+            elif f.partly_named:
+                mark = "  [названа частично: %d из %d]" % (f.named, f.count)
+            else:
+                mark = ""
             lines.append("    %4d фото  %s%s" % (f.count, f.path, mark))
     for e in analysis.errors:
         lines.append("ОШИБКА ДОСТУПА: %s — %s" % (e.path, e.message))

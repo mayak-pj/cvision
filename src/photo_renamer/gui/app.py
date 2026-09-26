@@ -357,8 +357,11 @@ class MainWindow(tk.Tk):
     def _folder_status(self, group: grouping.FolderGroup, folder: grouping.FolderInfo) -> str:
         if folder is group.reference:
             status = "ЭТАЛОН — готов" if folder.is_reference else "ЭТАЛОН — нужно переименовать вручную"
-        elif folder.is_reference:
+        elif folder.looks_finished:
             status = "уже названа по шаблону"
+        elif folder.partly_named:
+            # переименование начали и бросили: папку всё равно переименовываем, но это видно
+            status = "названа частично: %d из %d — будет переименована" % (folder.named, folder.count)
         else:
             status = ""
         if folder.unreadable:

@@ -169,12 +169,17 @@ def shortcut_pressed(state: int) -> bool:
 
 
 def clipboard_action(keycode: int = 0, state: int = 0, keysym: str = "", char: str = "") -> str:
-    """Что делать по нажатию: имя виртуального события, «select-all» или пустая строка."""
+    """Что делать по нажатию: имя виртуального события, «select-all» или пустая строка.
+
+    Сначала клавиша ищется по букве (и по её двойнику в русской раскладке), и только потом
+    по коду: если признаки разошлись, буква вернее — код нужен там, где буквы нет.
+    """
     if not shortcut_pressed(state):
         return ""
-    for letter, action in _CLIPBOARD_ACTIONS.items():
-        if shortcut_matches(letter, keysym, char, keycode):
-            return action
+    for by_code in (False, True):
+        for letter, action in _CLIPBOARD_ACTIONS.items():
+            if shortcut_matches(letter, keysym, char, keycode if by_code else 0):
+                return action
     return ""
 
 

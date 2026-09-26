@@ -133,6 +133,13 @@ def test_clipboard_keys_work_in_any_layout(root):
     assert theme.clipboard_action(70, 0x0004) == ""                # Ctrl+F к буферу не относится
 
 
+def test_letter_wins_over_the_key_code():
+    """Если признаки разошлись, вернее буква: код нужен там, где буквы нет."""
+    assert theme.clipboard_action(86, 0x0004, "c", "c") == "<<Copy>>"   # код V, буква C
+    assert theme.clipboard_action(0, 0x0004, "v", "v") == "<<Paste>>"   # кода нет — только буква
+    assert theme.clipboard_action(86, 0x0004, "", "") == "<<Paste>>"    # буквы нет — только код
+
+
 def test_clipboard_keys_by_letter_of_the_russian_layout():
     """На macOS кода клавиши, не зависящего от раскладки, нет — узнаём букву-двойник."""
     assert theme.clipboard_action(0, 0x0004, "Cyrillic_em", "м") == "<<Paste>>"     # V

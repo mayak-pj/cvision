@@ -319,10 +319,12 @@ def test_reorder_keeps_thumbnails_and_selection_by_name(editor):
     assert win.grid_widget._pending == len(win.photos)
 
 
+# Windows-путь (клавиша узнаётся по коду) здесь не проверить: на macOS Tk сам подставляет
+# к заданному коду свой keysym, и событие получается противоречивым — код говорит «V»,
+# а keysym «a». Этот путь проверяется без окна, в test_theme.clipboard_action.
 PASTE_KEYS = [
     ("латиница", "<Control-v>", {}),
     ("русская раскладка", "<Control-KeyPress>", dict(keysym="Cyrillic_em", state=0x0004)),
-    ("Windows: по коду клавиши", "<Control-KeyPress>", dict(keycode=86, state=0x0004)),
 ]
 if theme_mod.COMMAND_IS_A_SHORTCUT:
     PASTE_KEYS += [

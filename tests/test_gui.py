@@ -267,3 +267,18 @@ def test_every_column_reads_from_the_left(window):
     for name in window.tree.cget("columns"):
         assert str(window.tree.column(name, "anchor")) == "w", name
         assert str(window.tree.heading(name, "anchor")) == "w", name
+
+
+def test_partly_renamed_folder_is_marked_and_renamed(window, project):
+    """Недоделанную папку программа переименовывает, но в статусе про это предупреждает."""
+    window.root_var.set(str(project))
+    window.analyze()
+    window.wait_for_worker()
+    group = window.analysis.groups[0]
+    target = [f for f in group.folders if f is not group.reference][0]
+
+    target.named_share = 20 / 24.0      # как будто пару десятков кадров переименовали руками
+    target.coverage = 0.2
+    status = window._folder_status(group, target)
+    assert "названа частично" in status and "будет переименована" in status
+    assert target.will_rename and target in group.targets

@@ -82,6 +82,44 @@ def test_generic_numbering_is_not_a_reference():
     assert real.is_reference
 
 
+def test_partly_renamed_folder_is_not_finished():
+    """Случай с рабочей машины: в папке переименовали пару десятков кадров одной детали.
+
+    Доля названных при этом высокая, и папка считалась уже названной — то есть выпадала
+    из переименования. Отличает её от готовой набор деталей: у готовой он как у эталона.
+    """
+    from photo_renamer.scanner import FolderScan
+
+    ready = grouping.folder_info(FolderScan("/готовая", [
+        "Кулер.JPG", "Матрица фото 1.JPG", "Матрица фото 2.JPG", "Кабель HDMI.JPG",
+        "Плата питания фото 1.JPG", "Плата питания фото 2.JPG", "Серийный номер.JPG"]))
+    partly = grouping.folder_info(FolderScan("/недоделанная", [
+        "Шлейф %d фото %d.JPG" % (i, k) for i in range(1, 8) for k in range(1, 4)] +
+        ["IMG_0001.JPG", "IMG_0002.JPG"]))
+
+    groups = grouping.make_groups([ready, partly], [0, 0])
+    assert groups[0].reference is ready
+    assert ready.looks_finished and not ready.will_rename
+    assert not partly.looks_finished and partly.will_rename
+    assert partly.partly_named and (partly.named, partly.count) == (21, 23)
+    assert partly in groups[0].targets
+
+
+def test_finished_folder_survives_a_few_unnamed_photos():
+    """В готовую папку докладывают замены и рентгены — пара неназванных фото это не отменяет."""
+    from photo_renamer.scanner import FolderScan
+
+    names = ["Кулер.JPG", "Матрица фото 1.JPG", "Матрица фото 2.JPG", "Кабель HDMI.JPG",
+             "Плата питания фото 1.JPG", "Плата питания фото 2.JPG", "Серийный номер.JPG",
+             "Плата управления фото 1.JPG", "Плата управления фото 2.JPG", "Подставка.JPG"]
+    reference = grouping.folder_info(FolderScan("/эталон", names))
+    same = grouping.folder_info(FolderScan("/такая же", names + ["IMG_0009.JPG"]))
+
+    grouping.make_groups([reference, same], [0, 0])
+    assert same.coverage == 1.0
+    assert same.looks_finished and not same.will_rename
+
+
 def test_service_names_are_not_a_reference():
     """Случай с рабочей машины: папка из файлов «file (1)»…«file (17)» не переименована.
 
