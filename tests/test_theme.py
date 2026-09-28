@@ -24,8 +24,16 @@ def keyboard_window(root):
     window.attributes("-alpha", 0.0)
     window.update()
     window.focus_force()
-    window.withdraw()
     window.update()
+    # окно не прячем: спрятанному Tk не отдаёт нажатия. Оно и так не видно — размер 1×1
+    # и полная прозрачность. Если нажатия всё равно не доходят (бывает на чужих машинах),
+    # проверку пропускаем: разбор сочетаний проверяется и без окна
+    probe = []
+    window.bind("<Control-F12>", lambda e: probe.append(1))
+    window.event_generate("<Control-F12>", when="now")
+    if not probe:
+        pytest.skip("окно не получает нажатия клавиш в этой среде")
+    window.unbind("<Control-F12>")
     yield window
     window.destroy()
 
