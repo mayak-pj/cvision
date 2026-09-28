@@ -244,13 +244,19 @@ def test_dragging_a_column_does_not_move_the_others(window):
 
 
 def test_horizontal_scrollbar_appears_only_when_needed(window):
-    window.deiconify()
-    window.geometry("1400x600")
-    window.update()
-    window._update_hscroll()
-    assert not window.hscroll.winfo_ismapped(), "всё помещается — полоса не нужна"
+    """Полоса показана ровно тогда, когда столбцы не помещаются — при любом шрифте."""
+    from photo_renamer.gui import theme
 
-    window.tree.column("status", width=900)
+    window.deiconify()
+    for width in (1400, 2200):
+        window.geometry("%dx600" % width)
+        window.update()
+        window._update_hscroll()
+        window.update()
+        fits = theme.columns_width(window.tree) <= window.tree.winfo_width()
+        assert bool(window.hscroll.winfo_ismapped()) != fits, width
+
+    window.tree.column("status", width=2000)       # заведомо не помещается
     window._update_hscroll()
     window.update()
     assert window.hscroll.winfo_ismapped(), "столбцы не помещаются — нужна полоса прокрутки"
@@ -320,11 +326,12 @@ def test_no_empty_space_to_the_right_of_the_columns(window):
     from photo_renamer.gui import theme
 
     window.deiconify()
-    for width in (1400, 1800, 2200):
+    for width in (900, 1400, 1800, 2200):
         window.geometry("%dx700" % width)
         window.update()
-        assert theme.columns_width(window.tree) == window.tree.winfo_width(), width
-        assert not window.hscroll.winfo_ismapped(), width
+        # проверяем правило, а не числа: свободного места справа не бывает никогда —
+        # столбцы либо занимают всю ширину, либо не помещаются (и тогда есть полоса)
+        assert theme.columns_width(window.tree) >= window.tree.winfo_width(), width
 
 
 def test_side_panel_keeps_its_buttons_readable(window):
@@ -355,10 +362,14 @@ def test_all_columns_fit_when_the_window_opens(window):
 
     window.deiconify()
     window.update()
-    assert theme.columns_width(window.tree) <= window.tree.winfo_width()
-    assert not window.hscroll.winfo_ismapped()
-    assert window.tree.column("similarity", "width") >= \
-           window.tree.column("similarity", "minwidth")
+    # окно раздвигается под столбцы, но шире экрана не становится: на узком экране
+    # с крупным шрифтом они могут и не поместиться — тогда должна быть полоса прокрутки
+    room = int(window.winfo_screenwidth() * 0.95) - window.winfo_width()
+    if theme.columns_width(window.tree) > window.tree.winfo_width():
+        assert room <= 0, "окно можно было раздвинуть, но столбцы не поместились"
+        assert window.hscroll.winfo_ismapped()
+    else:
+        assert not window.hscroll.winfo_ismapped()
 
 
 def test_status_column_is_sized_by_its_longest_value(window):

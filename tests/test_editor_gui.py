@@ -247,6 +247,8 @@ def test_ctrl_s_works_in_russian_layout(editor):
     assert any(name.startswith("Кулер") for name in os.listdir(str(folder)))
 
 
+@pytest.mark.skipif(not theme_mod.COMMAND_IS_A_SHORTCUT,
+                    reason="Command — сочетание только на macOS: на Windows Mod1 выставляет NumLock")
 def test_command_and_russian_layout_shortcuts(editor):
     """macOS: то же сочетание нажимают Command; в русской раскладке приходит «⌘ы»/«Ctrl+я»."""
     win, folder, _ = editor
@@ -345,6 +347,6 @@ def test_paste_into_the_category_field(editor, label, sequence, event):
     win.search_var.set("")
     win.search_entry.focus_set()
     win.update()
-    win.search_entry.event_generate(sequence, when="now", **event)
+    press(win.search_entry, sequence, **event)
     win.update()
     assert win.search_var.get() == "Плата управления", label
