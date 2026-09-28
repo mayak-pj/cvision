@@ -4,6 +4,8 @@ import os
 
 import pytest
 
+from conftest import press
+
 tk = pytest.importorskip("tkinter")
 
 from photo_renamer import config as cfg, grouping  # noqa: E402
@@ -322,8 +324,7 @@ def test_paste_into_the_category_field(batch):
     win.search_var.set("")
     win.search_entry.focus_set()
     win.update()
-    win.search_entry.event_generate("<Control-KeyPress>", keysym="Cyrillic_em", state=0x0004,
-                                    when="now")
+    press(win.search_entry, "<Control-KeyPress>", keysym="Cyrillic_em", state=0x0004)
     win.update()
     assert win.search_var.get() == "Плата управления"
 
@@ -575,7 +576,8 @@ def test_candidate_buttons_are_left_aligned(batch):
     """Номера 1, 2 и 3 стоят друг под другом: текст кнопок прижат к левому краю."""
     win, _ = batch
     select_row(win, 0)
-    assert win.style.lookup("Candidate.TButton", "anchor") == "w"
+    # lookup возвращает то строку, то объект Tcl — сравниваем как строки
+    assert str(win.style.lookup("Candidate.TButton", "anchor")) == "w"
     for widget in win.candidates_frame.winfo_children():
         if widget.winfo_class() == "TButton":
             assert str(widget.cget("style")) == "Candidate.TButton"
@@ -709,13 +711,18 @@ def test_dragging_a_column_does_not_move_the_others(batch):
 
 
 def test_horizontal_scrollbar_appears_only_when_needed(batch):
+    """Полоса показана ровно тогда, когда столбцы не помещаются — при любом шрифте."""
+    from photo_renamer.gui import theme
+
     win, _ = batch
     win.geometry("1600x700")
     win.update()
     win._update_hscroll()
-    assert not win.hscroll.winfo_ismapped()
+    win.update()
+    fits = theme.columns_width(win.tree) <= win.tree.winfo_width()
+    assert bool(win.hscroll.winfo_ismapped()) != fits
 
-    win.tree.column("status", width=1200)
+    win.tree.column("status", width=2000)
     win._update_hscroll()
     win.update()
     assert win.hscroll.winfo_ismapped()

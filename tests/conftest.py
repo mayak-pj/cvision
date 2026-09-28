@@ -69,3 +69,19 @@ def _make_windows_quiet() -> None:
 
 if tk is not None:
     _make_windows_quiet()
+
+
+def press(widget, sequence, **kwargs):
+    """Нажатие клавиши в тесте.
+
+    Событие с кириллическим keysym («Ctrl+ы») Tk собирает не везде: на Windows такой клавиши
+    в раскладке раннера нет, и event_generate падает с «no keycode for keysym». Разбор
+    русской раскладки там идёт по коду клавиши, и он проверяется без окна
+    (test_theme.clipboard_action, shortcut_matches), поэтому оконную проверку пропускаем.
+    """
+    import pytest
+
+    try:
+        widget.event_generate(sequence, when="now", **kwargs)
+    except tk.TclError as exc:
+        pytest.skip("Tk здесь не собирает такое событие: %s" % exc)

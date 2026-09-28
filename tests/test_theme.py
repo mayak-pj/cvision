@@ -2,6 +2,8 @@
 
 import pytest
 
+from conftest import press
+
 tk = pytest.importorskip("tkinter")
 from tkinter import ttk  # noqa: E402
 
@@ -212,8 +214,8 @@ def test_several_shortcuts_on_one_window_do_not_erase_each_other(keyboard_window
     fired = []
     for letter in ("z", "a", "s"):
         theme.bind_shortcut(window, letter, lambda l=letter: fired.append(l))
-    window.event_generate("<Command-KeyPress>", keysym="Cyrillic_ya", state=0x0008, when="now")
-    window.event_generate("<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004, when="now")
+    press(window, "<Command-KeyPress>", keysym="Cyrillic_ya", state=0x0008)
+    press(window, "<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004)
     assert fired == ["z", "s"]
 
 
@@ -225,21 +227,20 @@ def test_shortcut_works_in_any_layout(keyboard_window):
 
     window.event_generate("<Control-s>", when="now")
     assert len(fired) == 1
-    window.event_generate("<Command-s>", when="now")        # macOS
+    window.event_generate("<Command-s>", when="now")            # macOS
     assert len(fired) == 2
 
     # русская раскладка: буквы «s» в событии нет — есть «ы» на той же клавише
-    window.event_generate("<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004, when="now")
+    press(window, "<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004)
     assert len(fired) == 3
-    window.event_generate("<Command-KeyPress>", keysym="Cyrillic_yeru", state=0x0008, when="now")
+    press(window, "<Command-KeyPress>", keysym="Cyrillic_yeru", state=0x0008)
     assert len(fired) == 4
 
-    window.event_generate("<Control-KeyPress>", keysym="Cyrillic_che", state=0x0004, when="now")
+    press(window, "<Control-KeyPress>", keysym="Cyrillic_che", state=0x0004)
     assert len(fired) == 4                      # другая клавиша — ничего не делаем
-    window.event_generate("<KeyPress>", keysym="Cyrillic_yeru", state=0, when="now")
+    press(window, "<KeyPress>", keysym="Cyrillic_yeru", state=0)
     assert len(fired) == 4                      # без Ctrl — обычный ввод
-    window.event_generate("<Control-KeyPress>", keysym="Cyrillic_yeru",
-                          state=0x0004 | 0x20000, when="now")
+    press(window, "<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004 | 0x20000)
     assert len(fired) == 4                      # Ctrl+Alt (AltGr) — не сочетание
 
 

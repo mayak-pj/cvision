@@ -4,6 +4,8 @@ import os
 
 import pytest
 
+from conftest import press
+
 tk = pytest.importorskip("tkinter")
 
 from photo_renamer import config as cfg  # noqa: E402
@@ -240,7 +242,7 @@ def test_ctrl_s_works_in_russian_layout(editor):
     pick_name(win, "Кулер")
     win.grid_widget.select_all()
     win.update()
-    win.event_generate("<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004, when="now")
+    press(win, "<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004)
     win.update()
     assert any(name.startswith("Кулер") for name in os.listdir(str(folder)))
 
@@ -255,7 +257,7 @@ def test_command_and_russian_layout_shortcuts(editor):
     win.update()
     assert any(name.startswith("Кулер") for name in os.listdir(str(folder)))
 
-    win.event_generate("<Command-KeyPress>", keysym="Cyrillic_ya", state=0x0008, when="now")
+    press(win, "<Command-KeyPress>", keysym="Cyrillic_ya", state=0x0008)
     win.update()
     assert not any(name.startswith("Кулер") for name in os.listdir(str(folder))), "Cmd+я не отменил"
 
