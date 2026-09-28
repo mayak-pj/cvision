@@ -222,7 +222,7 @@ def test_several_shortcuts_on_one_window_do_not_erase_each_other(keyboard_window
     fired = []
     for letter in ("z", "a", "s"):
         theme.bind_shortcut(window, letter, lambda l=letter: fired.append(l))
-    press(window, "<Command-KeyPress>", keysym="Cyrillic_ya", state=0x0008)
+    press(window, "<Control-KeyPress>", keysym="Cyrillic_ya", state=0x0004)
     press(window, "<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004)
     assert fired == ["z", "s"]
 
@@ -233,23 +233,30 @@ def test_shortcut_works_in_any_layout(keyboard_window):
     window = keyboard_window
     theme.bind_shortcut(window, "s", lambda: fired.append(1))
 
+    expected = 0
     window.event_generate("<Control-s>", when="now")
-    assert len(fired) == 1
-    window.event_generate("<Command-s>", when="now")            # macOS
-    assert len(fired) == 2
+    expected += 1
+    assert len(fired) == expected
 
     # русская раскладка: буквы «s» в событии нет — есть «ы» на той же клавише
     press(window, "<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004)
-    assert len(fired) == 3
-    press(window, "<Command-KeyPress>", keysym="Cyrillic_yeru", state=0x0008)
-    assert len(fired) == 4
+    expected += 1
+    assert len(fired) == expected
+
+    if theme.COMMAND_IS_A_SHORTCUT:     # на Windows Command — это Mod1 (NumLock), его не привязываем
+        window.event_generate("<Command-s>", when="now")
+        expected += 1
+        assert len(fired) == expected
+        press(window, "<Command-KeyPress>", keysym="Cyrillic_yeru", state=0x0008)
+        expected += 1
+        assert len(fired) == expected
 
     press(window, "<Control-KeyPress>", keysym="Cyrillic_che", state=0x0004)
-    assert len(fired) == 4                      # другая клавиша — ничего не делаем
+    assert len(fired) == expected               # другая клавиша — ничего не делаем
     press(window, "<KeyPress>", keysym="Cyrillic_yeru", state=0)
-    assert len(fired) == 4                      # без Ctrl — обычный ввод
+    assert len(fired) == expected               # без Ctrl — обычный ввод
     press(window, "<Control-KeyPress>", keysym="Cyrillic_yeru", state=0x0004 | 0x20000)
-    assert len(fired) == 4                      # Ctrl+Alt (AltGr) — не сочетание
+    assert len(fired) == expected               # Ctrl+Alt (AltGr) — не сочетание
 
 
 def test_shortcut_does_not_fire_twice_on_one_press(keyboard_window):
