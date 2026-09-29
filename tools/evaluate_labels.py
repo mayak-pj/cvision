@@ -150,10 +150,16 @@ def main():
     parser.add_argument("--grid", action="store_true", help="перебрать настройки")
     parser.add_argument("--learning", action="store_true",
                         help="сравнить работу с библиотекой примеров и без неё")
+    parser.add_argument("--no-clip", action="store_true", help="считать без модели CLIP")
     args = parser.parse_args()
 
     labels = read_labels(args.labels)
     reference = load_reference(args.reference)
+    encoder = None
+    if not args.no_clip:
+        from photo_renamer import config as cfg
+        encoder = cfg.AppConfig().encoder()
+    print("Модель CLIP: %s" % ("подключена" if encoder is not None else "нет"))
     unknown = {t for _, _, truth in labels for t in truth if t is not None} - set(reference.categories)
     if unknown:
         sys.exit("В разметке есть категории, которых нет в эталоне: %s" % ", ".join(sorted(unknown)))
@@ -180,7 +186,9 @@ def main():
 
     def prepared(white_balance):
         if white_balance not in cache:
-            ex = feat.FeatureExtractor(white_balance=white_balance)
+            # модель CLIP подключается так же, как в программе: без неё замер получается
+            # не про то, что работает на рабочей машине
+            ex = feat.FeatureExtractor(white_balance=white_balance, encoder=encoder)
             ref_feats, _ = feat.extract_many(ex, [p.path for p in reference.photos])
             model = matcher.ReferenceModel(reference, ex, ref_feats)
             folders = [(folder, names, feat.extract_many(ex, [os.path.join(folder, n) for n in names])[0], truth)
