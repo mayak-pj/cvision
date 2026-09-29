@@ -92,6 +92,15 @@ class MatchConfig:
     # голосуют, получает штраф к расстоянию. 0 — не учитывать.
     block_weight: float = 0.02          # подобрано по ручной разметке (docs/decisions.md)
     block_span: int = 8                 # сколько соседних кадров с каждой стороны подсказывают категорию
+
+    # Библиотека примеров: фото, которому человек сам задал категорию, становится примером
+    # этой категории, и остальные фото папки сравниваются ещё и с ним. Деталь, снятая в этой
+    # папке, похожа на себя же больше, чем на эталонную из другого проекта, поэтому одна
+    # правка помогает всем её ракурсам и всем таким же деталям рядом.
+    learn_from_confirmed: bool = True
+    # Пример слабее эталона: его расстояние умножается на это число, поэтому при прочих равных
+    # выигрывает эталон. Имя, полученное только благодаря примеру, помечается «ПРОВЕРЬТЕ».
+    example_penalty: float = 1.2
     def for_features(self, has_clip: bool) -> Dict[str, float]:
         """Веса под то, что реально посчитано: с моделью CLIP — свой набор, без неё — обычный."""
         return dict(self.weights_with_clip if has_clip else self.weights)
@@ -258,6 +267,11 @@ class FolderMatch:
     manual: Dict[int, Optional[str]] = field(default_factory=dict)  # выбор пользователя: ключ категории или None
     # категории, которых нет в эталоне: пользователь добавил их вручную для этой папки
     extra_categories: Dict[str, Category] = field(default_factory=dict)
+    # признаки фото папки: нужны, чтобы подтверждённое фото стало примером своей категории
+    features: List[Optional[feat.Features]] = field(default_factory=list)
+    # from_example[строка, категория] — расстояние взято у примера, а не у эталонного фото
+    from_example: Optional[np.ndarray] = None
+    examples: Dict[str, int] = field(default_factory=dict)   # сколько примеров у категории
 
     def category_counts(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
@@ -344,9 +358,51 @@ def match_features(
             photos[i].note = "не удалось прочитать фото" + (": " + unreadable[i] if unreadable.get(i) else "")
 
     result = FolderMatch(folder, photos, model, config, cat_dist, side_dist, feature_row,
-                         weights_used=weights_used, fixed=dict(fixed))
+                         weights_used=weights_used, fixed=dict(fixed),
+                         features=list(feature_list),
+                         from_example=np.zeros(cat_dist.shape, dtype=bool))
+    for i, (cat, _, _) in fixed.items():        # имя уже по шаблону — это тоже подтверждение
+        learn_example(result, i, cat.key)
     solve(result)
     return result
+
+
+def learn_example(result: FolderMatch, index: int, key: Optional[str]) -> bool:
+    """Подтверждённое фото становится примером своей категории. True — расклад изменился.
+
+    Зачем: эталон снят на другой машине и при другом свете, а деталь из этой папки похожа
+    на себя же куда больше. Поэтому одна ручная правка помогает и остальным ракурсам той же
+    детали, и таким же деталям рядом — на размеченной папке это главный источник точности.
+
+    Пример слабее эталона (`example_penalty`): при прочих равных выигрывает эталон, а имя,
+    полученное только благодаря примеру, помечается «ПРОВЕРЬТЕ» — человек ошибается тоже,
+    и его ошибка не должна тихо расходиться по папке.
+    """
+    config, model = result.config, result.model
+    if not config.learn_from_confirmed or key is None or result.from_example is None:
+        return False
+    column = model.cat_index.get(key)
+    if column is None:                      # категория добавлена вручную, столбца у неё нет
+        return False
+    example = result.features[index] if index < len(result.features) else None
+    if example is None or model.extractor is None or not result.feature_row:
+        return False
+
+    rows = sorted(result.feature_row, key=result.feature_row.get)
+    targets = [result.features[i] for i in rows]
+    comps = model.extractor.distance_components(targets, [example])
+    comps = {name: m * model.scales.get(name, 1.0) for name, m in comps.items()}
+    distance = feat.combine(comps, result.weights_used)[:, 0] * max(config.example_penalty, 1.0)
+    distance[result.feature_row[index]] = np.inf        # само себе примером не служит
+
+    better = distance < result.cat_dist[:, column]
+    if not better.any():
+        result.examples[key] = result.examples.get(key, 0) + 1
+        return False
+    result.cat_dist[better, column] = distance[better]
+    result.from_example[better, column] = True
+    result.examples[key] = result.examples.get(key, 0) + 1
+    return True
 
 
 def solve(result: FolderMatch) -> None:
@@ -557,12 +613,19 @@ def _assign_categories(result: FolderMatch, rows: List[int], used: np.ndarray) -
             continue
         photo.confidence = float(conf[c])
         photo.distance = float(raw_dist[r, c])
+        # имя, до которого дотянулся только пример (подтверждённое человеком фото),
+        # всегда просят проверить: человек ошибается тоже, и его ошибка не должна
+        # тихо разойтись по папке
+        by_example = result.from_example is not None and bool(result.from_example[selected[r], c])
         if name_everything:
             # имя предлагается всегда, сомнительные видны в предпросмотре как «ПРОВЕРЬТЕ»
             photo.status = STATUS_OK if photo.confidence >= config.min_confidence else STATUS_CHECK
             photo.category = model.categories[c]
             if photo.status == STATUS_CHECK:
                 photo.note = "низкая уверенность (%.0f%%) — проверьте имя" % photo.confidence
+            elif by_example:
+                photo.status = STATUS_CHECK
+                photo.note = "узнано по фото, которое вы подтвердили, — проверьте имя"
             continue
         if photo.confidence < config.min_confidence:
             photo.status = STATUS_LOW_CONFIDENCE
@@ -908,6 +971,7 @@ def set_category(result: FolderMatch, index: int, key: Optional[str]) -> None:
     if index in result.fixed:
         return
     result.manual[index] = key
+    learn_example(result, index, key)
     solve(result)
 
 

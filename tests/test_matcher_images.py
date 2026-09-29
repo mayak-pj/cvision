@@ -108,3 +108,78 @@ def test_never_wrong_name_under_heavy_duplication(model, tmp_path):
     wrong = [(p.filename, p.category.name) for p in identified if p.category.name != seeds[shots[p.index][0]]]
     assert wrong == []
     assert len(identified) >= 80
+
+
+def test_confirmed_photo_helps_the_rest_of_the_folder(model, tmp_path):
+    """Библиотека примеров: одна правка человека помогает таким же деталям рядом.
+
+    Снимаем «другой машиной»: все кадры повёрнуты и сильно искажены, поэтому на эталон они
+    похожи слабо. Человек подтверждает одну планку памяти — и вторая узнаётся по ней.
+    """
+    from photo_renamer import matcher
+    from photo_renamer.reference import category_key
+
+    shots = [(5, 12), (6, 12), (5, 12), (6, 12), (7, 12)]
+    folder = str(tmp_path / "другая машина")
+    names = make_target(tmp_path / "другая машина", shots)
+    memory = category_key("Оперативная память")
+
+    without = match_folder(model, folder, names, MatchConfig(learn_from_confirmed=False))
+    with_learning = match_folder(model, folder, names, MatchConfig(learn_from_confirmed=True))
+    # до правки раскладка одинаковая: примеров ещё нет
+    assert [p.category.key for p in without.photos] == [p.category.key for p in with_learning.photos]
+
+    matcher.set_category(with_learning, 0, memory)
+    assert with_learning.examples.get(memory) == 1
+    # расстояние остальных фото до этой категории стало меньше — они похожи на подтверждённое
+    column = model.cat_index[memory]
+    assert (with_learning.cat_dist[:, column] <= without.cat_dist[:, column] + 1e-9).all()
+    assert (with_learning.cat_dist[:, column] < without.cat_dist[:, column]).any()
+
+
+def test_example_is_weaker_than_the_reference(model, tmp_path):
+    """Пример не должен перебивать эталон: при прочих равных выигрывает образец."""
+    from photo_renamer import matcher
+    from photo_renamer.reference import category_key
+
+    names = make_target(tmp_path / "SN_вес", [(7, 0), (8, 0), (5, 0)])
+    folder = str(tmp_path / "SN_вес")
+    result = match_folder(model, folder, names, MatchConfig(example_penalty=1.2))
+    before = result.cat_dist.copy()
+
+    matcher.set_category(result, 0, category_key("Кулер"))
+    # фото 0 — почти копия эталонного кулера, но с наценкой пример проигрывает эталону
+    column = model.cat_index[category_key("Кулер")]
+    assert result.cat_dist[result.feature_row[1], column] <= before[result.feature_row[1], column]
+
+
+def test_name_found_only_by_example_is_marked_for_checking(model, tmp_path):
+    """Имя, до которого дотянулся только пример, просят проверить."""
+    from photo_renamer import matcher
+    from photo_renamer.matcher import STATUS_CHECK
+    from photo_renamer.reference import category_key
+
+    shots = [(5, 25), (5, 25), (7, 0)]
+    folder = str(tmp_path / "SN_проверьте")
+    names = make_target(tmp_path / "SN_проверьте", shots)
+    result = match_folder(model, folder, names, MatchConfig())
+    matcher.set_category(result, 0, category_key("Оперативная память"))
+
+    second = result.photos[1]
+    if second.category and second.category.key == category_key("Оперативная память") \
+            and result.from_example[result.feature_row[1], model.cat_index[second.category.key]]:
+        assert second.status == STATUS_CHECK
+        assert "подтвердили" in second.note
+
+
+def test_learning_can_be_switched_off(model, tmp_path):
+    from photo_renamer import matcher
+    from photo_renamer.reference import category_key
+
+    names = make_target(tmp_path / "SN_без", [(5, 20), (5, 20)])
+    result = match_folder(model, str(tmp_path / "SN_без"), names,
+                          MatchConfig(learn_from_confirmed=False))
+    before = result.cat_dist.copy()
+    matcher.set_category(result, 0, category_key("Оперативная память"))
+    assert (result.cat_dist == before).all()
+    assert not result.examples

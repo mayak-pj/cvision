@@ -122,11 +122,34 @@ def score(result, truth):
     return counts, wrong
 
 
+def simulate_work(model, folder, names, features, truth, config):
+    """Как работает человек: идёт по списку сверху вниз и исправляет неверные имена.
+
+    Возвращает (правок, счёт после работы). Каждая правка — это подтверждение категории,
+    то есть ещё и пример для библиотеки: следующие фото программа уже узнаёт сама.
+    Считаем самый невыгодный порядок — подряд, а не «сначала сомнительные».
+    """
+    result = matcher.match_features(model, folder, names, features, config)
+    fixes = 0
+    for index in range(len(names)):
+        want = truth[index]
+        photo = result.photos[index]
+        got = photo.category.key if photo.identified else None
+        if got == want:
+            continue
+        fixes += 1
+        matcher.set_category(result, index, want)      # None — «не переименовывать»
+    check = sum(p.status == matcher.STATUS_CHECK for p in result.photos)
+    return fixes, score(result, truth), check
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--reference", "-r", required=True)
     parser.add_argument("labels")
     parser.add_argument("--grid", action="store_true", help="перебрать настройки")
+    parser.add_argument("--learning", action="store_true",
+                        help="сравнить работу с библиотекой примеров и без неё")
     args = parser.parse_args()
 
     labels = read_labels(args.labels)
@@ -204,6 +227,19 @@ def main():
     print("  имена целиком, всего: верно %d из %d (%.0f%%), НЕВЕРНО %d, не переименовано %d"
           % (total_names["верно"], total, 100.0 * total_names["верно"] / total, total_names["НЕВЕРНО"],
              total_names["не переименовано"]))
+    if args.learning:
+        print()
+        print("Библиотека примеров: сколько правок нужно, чтобы папка стала верной целиком")
+        for learn in (False, True):
+            config = matcher.MatchConfig(learn_from_confirmed=learn)
+            model, prepared_folders = prepared(False)
+            for folder, names, fs, truth in prepared_folders:
+                fixes, (counts, _), check = simulate_work(model, folder, names, fs, truth, config)
+                print("  %-28s обучение %-3s: правок %3d из %3d фото, после работы верно %3d,"
+                      " помечено «ПРОВЕРЬТЕ» %3d"
+                      % (os.path.basename(folder), "да" if learn else "нет", fixes, len(names),
+                         counts["верно"], check))
+
     if not args.grid:
         return
 

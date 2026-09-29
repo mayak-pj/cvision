@@ -128,6 +128,8 @@ _MATCH_KEYS = {
     "adapt_power": _number(0, 16),
     "block_weight": _number(0, 1.0),
     "block_span": _number(1, 100, integer=True),
+    "learn_from_confirmed": lambda v: None if isinstance(v, bool) else "ожидается true или false",
+    "example_penalty": _number(1.0, 4.0),
 }
 _APP_KEYS = {
     "work_size": _number(32, 2048, integer=True),
