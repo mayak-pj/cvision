@@ -140,7 +140,7 @@ def simulate_work(model, folder, names, features, truth, config):
         fixes += 1
         matcher.set_category(result, index, want)      # None — «не переименовывать»
     check = sum(p.status == matcher.STATUS_CHECK for p in result.photos)
-    return fixes, score(result, truth), check
+    return fixes, score(result, truth), check, result
 
 
 def main():
@@ -242,11 +242,17 @@ def main():
             config = matcher.MatchConfig(learn_from_confirmed=learn)
             model, prepared_folders = prepared(False)
             for folder, names, fs, truth in prepared_folders:
-                fixes, (counts, _), check = simulate_work(model, folder, names, fs, truth, config)
-                print("  %-28s обучение %-3s: правок %3d из %3d фото, после работы верно %3d,"
-                      " помечено «ПРОВЕРЬТЕ» %3d"
-                      % (os.path.basename(folder), "да" if learn else "нет", fixes, len(names),
-                         counts["верно"], check))
+                fixes, (counts, _), check, result = simulate_work(model, folder, names, fs, truth,
+                                                                   config)
+                # имена целиком: категория + номер экземпляра + сторона. Ошибка категории
+                # в длинной серии сдвигает все следующие номера, поэтому смотреть надо и сюда
+                by_name, wrong_names = score_names(result, expected_names(reference, names, truth))
+                print("  %-22s обучение %-3s: правок %3d, верных категорий %3d из %3d,"
+                      " верных имён %3d, «ПРОВЕРЬТЕ» %3d"
+                      % (os.path.basename(folder), "да" if learn else "нет", fixes,
+                         counts["верно"], len(names), by_name["верно"], check))
+                for filename, got, want in wrong_names[:5]:
+                    print("      осталось неверным: %s — «%s» вместо «%s»" % (filename, got, want))
 
     if not args.grid:
         return
