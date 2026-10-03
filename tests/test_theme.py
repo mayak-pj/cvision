@@ -267,13 +267,39 @@ def test_shortcut_does_not_fire_twice_on_one_press(keyboard_window):
     assert fired == [1]
 
 
+def pixels(image, size):
+    """Цвета всех закрашенных точек значка."""
+    return {image.get(x, y) for x in range(size) for y in range(size)
+            if image.transparency_get(x, y) is False}
+
+
+def test_icon_button_is_a_real_button(root):
+    """Значок стоит на обычной кнопке: с рамкой и подсветкой, как «+»/«−» у миниатюр."""
+    theme.apply(root, "light")
+    button = theme.IconButton(root, "add", hint="Добавить")
+    button.pack()
+    assert button.winfo_class() == "TButton"
+    assert button.cget("image"), "у кнопки должен быть нарисованный значок"
+    assert pixels(button._image, button.size), "значок не нарисован"
+
+
 def test_drawn_icons_are_repainted_with_the_theme(root):
     """Значок нарисован цветами темы: после переключения он не должен остаться прежним."""
     theme.apply(root, "light")
-    button = theme.IconButton(root, "add")
+    button = theme.IconButton(root, "delete")
     button.pack()
-    light = button.itemcget(button.find_all()[0], "fill")
+    light = pixels(button._image, button.size)
     theme.apply(root, "dark")
     theme.apply_to_existing(root, "dark")
-    assert button.itemcget(button.find_all()[0], "fill") != light
-    assert button.cget("background") == theme.colors("dark")["surface"]
+    assert pixels(button._image, button.size) != light
+
+
+def test_icon_button_matches_an_ordinary_small_button(root):
+    """Кнопка со значком той же высоты, что «+»/«−» размера миниатюр, — иначе ряд рваный."""
+    theme.apply(root, "light")
+    ordinary = ttk.Button(root, text="+", width=3)
+    ordinary.pack()
+    icon = theme.IconButton(root, "add")
+    icon.pack()
+    root.update()
+    assert icon.winfo_reqheight() == ordinary.winfo_reqheight()
