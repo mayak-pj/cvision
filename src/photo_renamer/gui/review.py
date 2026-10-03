@@ -817,9 +817,8 @@ class BatchWindow(tk.Toplevel):
                         "Всё равно переименовать %d файл(ов)?") % (unresolved, len(plan.pending))
             if not messagebox.askyesno(TITLE, question, parent=self):
                 return
-        elif not messagebox.askyesno(TITLE, "Переименовать %d файл(ов) в папке\n%s?"
-                                     % (len(plan.pending), self.folder.path), parent=self):
-            return
+        # обычного «переименовать N файлов?» больше нет: человек и так нажал кнопку
+        # «Переименовать папку», а ошибку возвращает «Отменить переименование»
         renamer.apply_plan(plan, self.log)
         self._last_plan = plan
         report = build_report(self.match, len(self.folder.scan.excluded), self.app_config.problem_categories)

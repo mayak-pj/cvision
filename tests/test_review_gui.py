@@ -236,7 +236,7 @@ def test_marked_photos_are_kept_and_the_rest_are_renamed(batch, monkeypatch):
     monkeypatch.setattr(review_mod.messagebox, "askyesno",
                         lambda title, text, **k: questions.append(text) or True)
     win.apply_folder()
-    assert questions and "Не опознано фото" not in questions[0]
+    assert questions == [], "лишних вопросов быть не должно: всё разобрано"
     after = set(os.listdir(str(root_dir / "SN2")))
     assert set(kept) <= after                       # помеченные остались с прежними именами
     assert any(not name.startswith("IMG_") for name in after)   # остальные переименованы
@@ -745,3 +745,27 @@ def test_every_column_reads_from_the_left(batch):
     win, _ = batch
     for name in win.tree.cget("columns"):
         assert str(win.tree.column(name, "anchor")) == "w", name
+
+
+def test_renaming_asks_nothing_when_everything_is_sorted_out(batch, monkeypatch):
+    """Кнопка «Переименовать папку» — уже решение, переспрашивать незачем."""
+    win, root_dir = batch
+    asked = []
+    monkeypatch.setattr(review_mod.messagebox, "askyesno",
+                        lambda title, text, **k: asked.append(text) or True)
+    win.apply_folder()
+    assert asked == []
+
+
+def test_unrecognised_photos_still_warn(batch, monkeypatch):
+    """А вот про неразобранные фото предупредить надо: номера пойдут вразнобой."""
+    from photo_renamer import matcher
+
+    win, _ = batch
+    photo = win.match.photos[0]            # как выглядит неразобранное фото
+    photo.status, photo.category, photo.new_name = matcher.STATUS_NO_MATCH, None, None
+    asked = []
+    monkeypatch.setattr(review_mod.messagebox, "askyesno",
+                        lambda title, text, **k: asked.append(text) or False)
+    win.apply_folder()
+    assert asked and "Не опознано фото" in asked[0]
