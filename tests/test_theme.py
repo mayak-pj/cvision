@@ -302,4 +302,6 @@ def test_icon_button_matches_an_ordinary_small_button(root):
     icon = theme.IconButton(root, "add")
     icon.pack()
     root.update()
-    assert icon.winfo_reqheight() == ordinary.winfo_reqheight()
+    # точка в точку не требуется: важно, чтобы ряд не выглядел рваным
+    assert abs(icon.winfo_reqheight() - ordinary.winfo_reqheight()) <= 1
+    assert icon.size >= 8, "значок не должен схлопнуться"

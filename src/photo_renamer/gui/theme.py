@@ -394,18 +394,40 @@ class IconButton(ttk.Button):
     вроде «✓» и «🗑» в tkinter отображаются не везде.
     """
 
-    def __init__(self, master, kind: str, command=None, size: int = 16, hint: str = "", **kwargs):
-        # padding подобран так, чтобы кнопка была той же высоты, что и обычная
-        # маленькая кнопка рядом («+»/«−» у размера миниатюр)
-        super().__init__(master, command=command, padding=5, **kwargs)
+    PADDING = 2
+
+    def __init__(self, master, kind: str, command=None, size: int = None, hint: str = "", **kwargs):
+        super().__init__(master, command=command, padding=self.PADDING, **kwargs)
         self.kind = kind
-        self.size = size
+        # размер значка не задаётся числом, а измеряется: кнопка должна быть той же высоты,
+        # что и обычная маленькая кнопка рядом («+»/«−» у размера миниатюр). На рабочей
+        # машине шрифт крупнее, и любое число сделало бы ряд кнопок рваным
+        self.size = size if size is not None else self._fit_size(master)
         self._image = None
         if hint:
             self.bind("<Enter>", lambda event: self._show_hint(hint))
             self.bind("<Leave>", lambda event: self._hide_hint())
         self._hint_window = None
         self.redraw()
+
+    @classmethod
+    def _fit_size(cls, master) -> int:
+        """Какой высоты должен быть значок, чтобы кнопка сравнялась с обычной.
+
+        Меряем две пробные кнопки: обычную с текстом и такую же с картинкой в одну точку.
+        Разница высот — это рамка и отступы, остальное место и занимает значок.
+        """
+        try:
+            text_button = ttk.Button(master, text="+", width=3)
+            dot = tk.PhotoImage(master=master, width=1, height=1)
+            image_button = ttk.Button(master, image=dot, padding=cls.PADDING)
+            overhead = image_button.winfo_reqheight() - 1
+            size = text_button.winfo_reqheight() - overhead
+            text_button.destroy()
+            image_button.destroy()
+        except tk.TclError:
+            return 16
+        return max(8, min(size, 64))
 
     def _show_hint(self, text: str) -> None:
         self._hide_hint()
