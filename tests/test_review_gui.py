@@ -774,3 +774,29 @@ def test_unrecognised_photos_still_warn(batch, monkeypatch):
                         lambda title, text, **k: asked.append(text) or False)
     win.apply_folder()
     assert asked and "Не опознано фото" in asked[0]
+
+
+def test_ctrl_s_renames_the_folder(batch):
+    """Ctrl+S делает то же, что кнопка «Переименовать папку» — как в редакторе эталона."""
+    from photo_renamer.gui import theme
+
+    win, root_dir = batch
+    assert theme.shortcut_label(win, "s") in win.apply_btn.cget("text")
+    before = sorted(os.listdir(str(root_dir / "SN2")))
+    win.update()
+    win.focus_force()
+    win.event_generate("<Control-s>", when="now")
+    win.update()
+    assert sorted(os.listdir(str(root_dir / "SN2"))) != before
+
+
+def test_ctrl_s_does_nothing_when_the_button_is_off(batch):
+    """Группа обработана — кнопка выключена, и сочетание тоже молчит."""
+    win, root_dir = batch
+    win.finish()
+    before = sorted(os.listdir(str(root_dir / "SN2")))
+    win.update()
+    win.focus_force()
+    win.event_generate("<Control-s>", when="now")
+    win.update()
+    assert sorted(os.listdir(str(root_dir / "SN2"))) == before

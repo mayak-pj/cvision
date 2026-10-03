@@ -113,7 +113,8 @@ class BatchWindow(tk.Toplevel):
         self.undo_btn = ttk.Button(bottom, text="Отменить переименование", command=self.undo_folder,
                                    state="disabled")
         self.skip_btn = ttk.Button(bottom, text="Пропустить папку", command=self.skip_folder)
-        self.apply_btn = ttk.Button(bottom, text="Переименовать папку", command=self.apply_folder)
+        self.apply_btn = ttk.Button(bottom, command=self.apply_folder,
+                                    text="Переименовать папку (%s)" % theme.shortcut_label(self, "s"))
         self.close_btn = ttk.Button(bottom, text="Закрыть", command=self.close)
         for button in (self.close_btn, self.apply_btn, self.skip_btn, self.undo_btn, self.undo_edit_btn):
             button.pack(side="right", padx=BUTTON_GAP)
@@ -175,6 +176,9 @@ class BatchWindow(tk.Toplevel):
         self.tree.bind("<KP_Enter>", self.confirm_selected)
         self._bind_undo(self.tree)
         self._bind_undo(self)
+        # Ctrl+S переименовывает папку — как в редакторе эталона. Работает и когда курсор
+        # в поле категории: своего Ctrl+S у поля нет
+        theme.bind_shortcut(self, "s", self.apply_folder, in_fields=True)
 
         # Правая панель размещается ДО таблицы: при нехватке места Tk ужимает то, что
         # размещено позже, и раньше таблица съедала ширину у списка категорий
@@ -793,7 +797,7 @@ class BatchWindow(tk.Toplevel):
     # --- переименование ------------------------------------------------------------------
 
     def apply_folder(self) -> None:
-        if self.match is None:
+        if self.match is None or str(self.apply_btn["state"]) == "disabled" or self._busy:
             return
         try:
             plan = renamer.build_plan(self.match)
