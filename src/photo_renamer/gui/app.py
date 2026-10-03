@@ -143,7 +143,7 @@ class MainWindow(tk.Tk):
         self.tree.heading("reference", text="Эталон", anchor="w")
         self.tree.heading("rename", text="Переименовать", anchor="w")
         self.tree.heading("count", text="Фото", anchor="w")
-        self.tree.heading("status", text="Статус", anchor="w")
+        self.tree.heading("status", text="Обработано", anchor="w")
         self.tree.heading("similarity", text="Сходство", anchor="w")
         # Значения всех столбцов прижаты к левому краю: взгляд читает строку слева направо,
         # и число фото не приходится искать у дальнего края.
@@ -158,7 +158,7 @@ class MainWindow(tk.Tk):
             self.tree.column(column, anchor="w", minwidth=40)
         # ширина — по самой длинной надписи, которая в столбце бывает
         theme.fit_columns(self.tree, {"reference": MARK_REFERENCE, "rename": MARK_NO, "count": "9999",
-                                      "status": "100% переименована", "similarity": "высокое"})
+                                      "status": "100%", "similarity": "высокое"})
         theme.fit_column_headers(self.tree)
         scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.hscroll = ttk.Scrollbar(tree_frame, orient="horizontal")
@@ -374,11 +374,11 @@ class MainWindow(tk.Tk):
         return MARK_YES if folder.will_rename else MARK_NO
 
     def _folder_status(self, group: grouping.FolderGroup, folder: grouping.FolderInfo) -> str:
-        """Насколько папка переименована. Число говорит само: у готовой 100 %, у брошенной
-        на полпути — 88 %, и видно, что с ней ещё работать."""
-        status = "%d%% переименована" % _percent(folder.named_share)
+        """Насколько папка переименована. В столбце только число: его смысл написан
+        в заголовке «Обработано», а слово в каждой строке лишнее."""
+        status = "%d%%" % _percent(folder.named_share)
         if folder.unreadable:
-            status += "; не прочитано фото: %d" % folder.unreadable
+            status += "   не прочитано фото: %d" % folder.unreadable
         return status
 
     def _on_resize(self, event) -> None:

@@ -58,9 +58,9 @@ def test_analyze_and_render(window, project):
     assert "нужно создать эталон" in window.tree.item(groups[1], "text")
     rows = folder_rows(window)
     assert (0, os.path.join("Проект", "A", "эталон"),
-            (gui_app.MARK_REFERENCE, "", "6", "100% переименована", "")) in rows
+            (gui_app.MARK_REFERENCE, "", "6", "100%", "")) in rows
     assert any(r[1].endswith("SN5") and r[2][0] == gui_app.MARK_REFERENCE
-               and r[2][3] == "0% переименована" for r in rows)
+               and r[2][3] == "0%" for r in rows)
     assert any(r[1].endswith("SN2") and r[2][:2] == ("", "да") for r in rows)  # папка будет переименована
     assert "Нужно создать эталонов: 1" in window.status_var.get()
     # папка проекта запоминается
@@ -289,7 +289,7 @@ def test_partly_renamed_folder_is_marked_and_renamed(window, project):
 
     target.named_share = 20 / 24.0      # как будто пару десятков кадров переименовали руками
     target.coverage = 0.2
-    assert window._folder_status(group, target) == "83% переименована"
+    assert window._folder_status(group, target) == "83%"
     assert target.will_rename and target in group.targets
 
 
@@ -302,9 +302,9 @@ def test_hundred_percent_means_every_photo(window, project):
     folder = group.folders[0]
 
     folder.named_share = 0.996
-    assert window._folder_status(group, folder) == "99% переименована"
+    assert window._folder_status(group, folder) == "99%"
     folder.named_share = 1.0
-    assert window._folder_status(group, folder) == "100% переименована"
+    assert window._folder_status(group, folder) == "100%"
 
 
 def test_reference_mark_starts_on_the_most_renamed_folder(window, project):
@@ -372,14 +372,16 @@ def test_all_columns_fit_when_the_window_opens(window):
         assert not window.hscroll.winfo_ismapped()
 
 
-def test_status_column_is_sized_by_its_longest_value(window):
-    """«Статус» больше не занимает место зря: ширина — по «100% переименована»."""
+def test_processed_column_is_sized_by_its_heading(window):
+    """В столбце «Обработано» только проценты, поэтому его ширина — по заголовку."""
     from tkinter import font
 
-    text = font.nametofont("TkDefaultFont")
+    heading = font.nametofont("TkHeadingFont")
     width = window.tree.column("status", "width")
-    assert width >= text.measure("100% переименована")
-    assert width <= text.measure("100% переименована") + 40
+    assert window.tree.heading("status", "text") == "Обработано"
+    assert width >= heading.measure("Обработано")
+    assert width <= heading.measure("Обработано") + 40
+    assert width < window.tree.column("#0", "width"), "столбец не должен быть шире путей"
 
 
 def test_dropdown_caption_is_centred_like_other_buttons(window):
