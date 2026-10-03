@@ -857,16 +857,14 @@ class BatchWindow(tk.Toplevel):
 
     def finish(self) -> None:
         self.header_var.set("Готово")
-        self.status_var.set("Обработано папок: %d. Лог: %s" % (self.done_folders, self.log.csv_path))
         self.apply_btn.configure(state="disabled")
         self.skip_btn.configure(state="disabled")
         self.tree.delete(*self.tree.get_children())
-        header = ("Группа обработана. Переименовано папок: %d.\n\nЛог: %s\nОтчёт: %s\n"
-                  % (len(self.reports), self.log.csv_path, self.log.txt_path))
-        if self.reports:
-            ReportDialog(self, header + "\n" + "\n".join(self.reports), title="Отчёт по группе")
-        else:
-            messagebox.showinfo(TITLE, header, parent=self)
+        # Окна с отчётом нет совсем: оно закрывало работу и его приходилось закрывать руками
+        # (замечание с рабочей машины). Сами отчёты никуда не делись — они пишутся в файл
+        # рядом с программой, и путь к нему виден внизу окна.
+        self.status_var.set("Группа обработана. Переименовано папок: %d.   Лог: %s   Отчёт: %s"
+                            % (len(self.reports), self.log.csv_path, self.log.txt_path))
 
     def close(self) -> None:
         if self._busy:
@@ -883,35 +881,3 @@ class BatchWindow(tk.Toplevel):
         self.destroy()
 
 
-class ReportDialog(tk.Toplevel):
-    """Отчёт по работе. Показывается один раз, когда группа обработана."""
-
-    def __init__(self, master, text: str, on_next=None, title: str = "Отчёт по папке"):
-        super().__init__(master)
-        self.on_next = on_next
-        self.title(title)
-        self.geometry("900x560")
-        frame = ttk.Frame(self, padding=10)
-        frame.pack(fill="both", expand=True)
-        widget = tk.Text(frame, wrap="word", height=25)
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=widget.yview)
-        widget.configure(yscrollcommand=scroll.set)
-        widget.insert("1.0", text)
-        widget.configure(state="disabled")
-        widget.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="left", fill="y")
-        buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
-        buttons.pack(fill="x")
-        if self.on_next is None:
-            ttk.Button(buttons, text="Закрыть", command=self.destroy).pack(side="right")
-        else:
-            ttk.Button(buttons, text="Остаться в папке", command=self.destroy).pack(side="left")
-            ttk.Button(buttons, text="Следующая папка", command=self.go_next).pack(side="right")
-        self.transient(master)
-        self.focus_set()
-
-    def go_next(self) -> None:
-        callback = self.on_next
-        self.destroy()
-        if callback:
-            callback()

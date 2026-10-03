@@ -23,7 +23,6 @@ def batch(tmp_path, monkeypatch):
     for name in ("showinfo", "showwarning", "showerror"):
         monkeypatch.setattr(review_mod.messagebox, name, lambda *a, **k: None)
     monkeypatch.setattr(review_mod.messagebox, "askyesno", lambda *a, **k: True)
-    monkeypatch.setattr(review_mod, "ReportDialog", lambda *a, **k: None)
     saved = []          # настройки пользователя тесты не трогают
     monkeypatch.setattr(review_mod.cfg, "save_config", lambda cfg_, path=None: saved.append(cfg_.review_thumb))
 
@@ -121,8 +120,8 @@ def test_apply_and_undo(batch):
     after = sorted(os.listdir(str(folder)))
     assert after != before
     assert any(name.startswith("Кулер") or name.startswith("Процессор") for name in after)
-    # отчёт по папке не показывается, работа сразу переходит дальше, но отмена остаётся
-    assert len(win.reports) == 1 and "Обработано папок: 1" in win.status_var.get()
+    # окон с отчётом нет, работа сразу переходит дальше, но отмена остаётся
+    assert len(win.reports) == 1 and "Переименовано папок: 1" in win.status_var.get()
     assert str(win.undo_btn["state"]) == "normal"
 
     win.undo_folder()
@@ -676,15 +675,21 @@ def test_sides_can_be_raised_above_the_number_of_photos(batch):
     assert win.names.sides_for("Стойка многопозиционная") == 3
 
 
-def test_report_is_shown_once_at_the_end(batch, monkeypatch):
-    """Отчёт по каждой папке не нужен: он копится и показывается один раз в конце группы."""
+def test_report_goes_to_the_file_not_to_a_window(batch, monkeypatch):
+    """Окна с отчётом нет: оно закрывало работу. Отчёт пишется в файл рядом с программой."""
     win, _ = batch
-    shown = []
-    monkeypatch.setattr(review_mod, "ReportDialog",
-                        lambda master, text, **kw: shown.append((text, kw.get("title"))))
+    popups = []
+    for name in ("showinfo", "showwarning"):
+        monkeypatch.setattr(review_mod.messagebox, name,
+                            lambda title, text, **k: popups.append(text))
     win.apply_folder()
-    assert len(shown) == 1 and shown[0][1] == "Отчёт по группе"
-    assert "Группа обработана" in shown[0][0] and "Папка:" in shown[0][0]
+
+    assert popups == [], "после переименования никаких окон"
+    assert not hasattr(review_mod, "ReportDialog")
+    assert "Группа обработана" in win.status_var.get()
+    assert win.log.txt_path in win.status_var.get()
+    with open(win.log.txt_path, encoding="utf-8") as f:
+        assert "Папка:" in f.read()                # сам отчёт на месте, просто в файле
 
 
 def test_dragging_a_column_does_not_move_the_others(batch):
