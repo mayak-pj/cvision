@@ -455,9 +455,20 @@ class IconButton(ttk.Button):
         self.configure(image=image)
 
 
+def _STROKE(size: int) -> int:
+    """Толщина штриха значка — волосяная линия, как у знака «+» в шрифте.
+
+    Толщина тоже не задаётся числом, а считается от размера значка: на рабочей машине
+    шрифт крупнее, значок больше, и штрих растёт вместе с ним. Доля маленькая (замечание
+    с рабочей машины «плюс и урна очень жирные»): на кнопке в 22 точки это одна точка,
+    и значок весит столько же, сколько буква на соседней кнопке.
+    """
+    return max(1, round(size / 16))
+
+
 def _PLUS(size: int):
     """Две полоски крест-накрест."""
-    thick = max(2, size // 8)
+    thick = _STROKE(size)
     pad = max(2, size // 5)
     middle = (size - thick) // 2
     return [(pad, middle, size - pad, middle + thick),
@@ -466,7 +477,7 @@ def _PLUS(size: int):
 
 def _URN(size: int):
     """Корпус, крышка и ручка."""
-    thick = max(1, size // 10)
+    thick = _STROKE(size)
     left, right = size // 4, size - size // 4
     top, bottom = size // 3, size - size // 8
     return [

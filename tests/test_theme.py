@@ -305,3 +305,14 @@ def test_icon_button_matches_an_ordinary_small_button(root):
     # точка в точку не требуется: важно, чтобы ряд не выглядел рваным
     assert abs(icon.winfo_reqheight() - ordinary.winfo_reqheight()) <= 1
     assert icon.size >= 8, "значок не должен схлопнуться"
+
+
+def test_icons_are_drawn_with_a_hairline(root):
+    """Плюс и урна нарисованы тонким штрихом: жирные полоски выбивались из ряда кнопок."""
+    theme.apply(root, "light")
+    for size in (16, 22, 32, 48):
+        thick = theme._STROKE(size)
+        assert 1 <= thick <= max(1, size // 12), f"штрих {thick} при значке {size}"
+        strokes = [min(x2 - x1, y2 - y1)
+                   for x1, y1, x2, y2 in theme._PLUS(size) + theme._URN(size)]
+        assert set(strokes) == {thick}, "у плюса и урны штрих одной толщины"
