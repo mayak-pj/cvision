@@ -2,13 +2,13 @@
 
 Собирает папку, которую достаточно скопировать на рабочий компьютер:
 
-    Переименование фото\\
+    CV\\
         python\\                 embeddable Python 3.8.10 + библиотеки + файлы tkinter
         model\\                  модель CLIP (если указана --model)
         src\\photo_renamer\\      код программы
         run.py
         config.example.json, names.example.txt
-        Переименование фото.bat  ярлык запуска
+        CV.bat  ярлык запуска
         Инструкция.txt
 
 Почему так:
@@ -20,7 +20,7 @@
 
 Запуск (см. dist_offline/README.md):
     python build_portable.py --embed python-3.8.10-embed-amd64.zip --wheels wheels
-                             --tk-from "C:\\Program Files\\Python38" --out "Переименование фото"
+                             --tk-from "C:\\Program Files\\Python38" --out "CV"
     python build_portable.py ... --dry-run     # только проверить и показать план
 """
 
@@ -264,7 +264,7 @@ def copy_project(project: Path, out: Path) -> None:
 
 
 def write_launchers(out: Path) -> None:
-    (out / "Переименование фото.bat").write_text(LAUNCHER, encoding="cp866")
+    (out / "CV.bat").write_text(LAUNCHER, encoding="cp866")
     (out / "Запуск с консолью (для ошибок).bat").write_text(CONSOLE_LAUNCHER, encoding="cp866")
     # отдельный ярлык для проверки: иначе её запускают чужим Python и получают «No module named numpy»
     (out / "Проверка сборки.bat").write_text(CHECK_LAUNCHER, encoding="cp866")

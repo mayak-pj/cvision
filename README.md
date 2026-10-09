@@ -1,4 +1,4 @@
-# Photo Renamer — переименование фотографий комплектующих по эталону
+# CV — переименование фотографий комплектующих по эталону
 
 Настольное приложение для Windows, которое переименовывает фотографии компьютерных
 комплектующих в папках с серийными номерами. Образцом служит эталонная папка,
@@ -241,12 +241,12 @@ Python, библиотеки и программа лежат в одной па
 ```bat
 python dist_offline\download_wheels.py --dest dist_offline\wheels
 python dist_offline\build_portable.py --embed python-3.8.10-embed-amd64.zip ^
-    --wheels dist_offline\wheels --tk-from "C:\...\Python38" --out "D:\Переименование фото"
-"D:\Переименование фото\python\python.exe" "D:\Переименование фото\check_install.py"
+    --wheels dist_offline\wheels --tk-from "C:\...\Python38" --out "D:\CV"
+"D:\CV\python\python.exe" "D:\CV\check_install.py"
 ```
 
 Либо без единой команды: вкладка **Actions** → «Портативная сборка для Windows 7» → Run workflow.
-Раннер соберёт всё сам и выложит артефакт `photo-renamer-windows7-portable`
+Раннер соберёт всё сам и выложит артефакт `cv-windows7-portable`
 (`.github/workflows/build-windows.yml`). Раннеров с Windows 7 у GitHub нет, поэтому
 запуск на рабочей машине всё равно проверяется через `check_install.py`.
 

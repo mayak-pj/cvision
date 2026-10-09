@@ -4,7 +4,7 @@
 она просто лежит рядом с программой: интернет и права администратора не нужны.
 
     python tools/get_clip_model.py                      # положить в model/ рядом с программой
-    python tools/get_clip_model.py --dest D:\\Переименование фото\\model
+    python tools/get_clip_model.py --dest D:\\CV\\model
     python tools/get_clip_model.py --check              # только проверить, что уже скачано
 
 Файл весит около 335 МБ. Если скачивание прервалось, запустите команду ещё раз: файл

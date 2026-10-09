@@ -21,7 +21,7 @@ from .editor import ReferenceEditor
 from .worker import Cancelled, Worker
 from .review import BatchWindow
 
-TITLE = "Переименование фото комплектующих"
+TITLE = "CV"
 
 # Отметки в таблице пишутся словами: значки вроде «✔» на Windows 7 в tkinter выводятся не всюду.
 # Галочка эталона: её ставит человек щелчком по столбцу, а программа — на самую

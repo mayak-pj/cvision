@@ -73,7 +73,7 @@ def test_wrong_platform_wheels_detected(tmp_path, parts):
 
 def test_build_creates_distribution(tmp_path, parts):
     embed, wheels, tk_from = parts
-    out = tmp_path / "Переименование фото"
+    out = tmp_path / "CV"
     build_portable.build(embed, wheels, tk_from, out, ROOT)
 
     python_dir = out / "python"
@@ -103,7 +103,7 @@ def test_build_creates_distribution(tmp_path, parts):
     assert (out / "run.py").exists() and (out / "src" / "photo_renamer" / "matcher.py").exists()
     assert not list((out / "src").rglob("__pycache__"))
     assert (out / "config.example.json").exists() and (out / "names.example.txt").exists()
-    assert (out / "Переименование фото.bat").exists()
+    assert (out / "CV.bat").exists()
     assert (out / "Запуск с консолью (для ошибок).bat").exists()
     assert (out / "Инструкция.txt").exists() and (out / "check_install.py").exists()
     assert (out / "logs").is_dir() and (out / "cache").is_dir()

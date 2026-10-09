@@ -70,23 +70,23 @@ jobs:
             --embed python-embed.zip `
             --wheels wheels `
             --tk-from "$tk" `
-            --out "dist/Переименование фото" @model
+            --out "dist/CV" @model
 
       - name: Проверить, что onnxruntime загружается в собранном Python
         shell: pwsh
         run: |
-          & "dist\Переименование фото\python\python.exe" -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
+          & "dist\CV\python\python.exe" -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
           if ($LASTEXITCODE -ne 0) { throw "onnxruntime не загрузился: без него CLIP работать не будет" }
 
       - name: Проверить сборку (на Windows Server, не на Windows 7)
         shell: pwsh
         run: |
-          & "dist\Переименование фото\python\python.exe" "dist\Переименование фото\check_install.py"
+          & "dist\CV\python\python.exe" "dist\CV\check_install.py"
 
       - name: Выложить как артефакт
         uses: actions/upload-artifact@v4
         with:
-          name: photo-renamer-windows7-portable
+          name: cv-windows7-portable
           path: dist
           retention-days: 30
           # ОБЯЗАТЕЛЬНО: иначе выгрузка молча выбрасывает скрытые папки, а numpy держит
@@ -101,12 +101,12 @@ jobs:
       - name: Скачать артефакт так же, как это делает человек
         uses: actions/download-artifact@v4
         with:
-          name: photo-renamer-windows7-portable
+          name: cv-windows7-portable
           path: downloaded
 
       - name: Запустить проверку из скачанного дистрибутива
         shell: pwsh
         run: |
-          $python = "downloaded/Переименование фото/python/python.exe"
-          & $python "downloaded/Переименование фото/check_install.py"
+          $python = "downloaded/CV/python/python.exe"
+          & $python "downloaded/CV/check_install.py"
           if ($LASTEXITCODE -ne 0) { throw "скачанный дистрибутив не прошёл проверку" }
