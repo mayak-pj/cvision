@@ -64,6 +64,12 @@ def is_jpg_name(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() == PHOTO_EXTENSION
 
 
+def is_service_name(filename: str) -> bool:
+    """Служебный файл macOS «._имя» (AppleDouble): система кладёт его рядом с каждым файлом
+    на дисках с exFAT/FAT и на сетевых дисках. Это не фото, хотя расширение у него то же."""
+    return filename.startswith("._")
+
+
 def natural_key(name: str):
     """Ключ «естественной» сортировки как в Проводнике: DSC_2 < DSC_2 (1) < DSC_10, без учёта регистра.
 
@@ -160,6 +166,8 @@ def _read_dir(folder: str):
         for entry in it:
             if _is_real_dir(entry):
                 subdirs.append(entry.name)
+            elif is_service_name(entry.name):
+                continue
             elif is_jpg_name(entry.name) and _is_regular_file(entry):
                 (excluded if is_excluded_name(entry.name) else photos).append(entry.name)
     return photos, excluded, subdirs

@@ -11,6 +11,7 @@ from photo_renamer.scanner import (
     find_photo_folders,
     is_excluded_name,
     is_jpg_name,
+    is_service_name,
     list_photos,
     natural_key,
     to_extended_path,
@@ -62,6 +63,31 @@ def test_xray_excluded(name):
 @pytest.mark.parametrize("name", ["рентген.jpg", "грамма.jpg", "Процессор 1 фото 1.jpg"])
 def test_other_names_not_excluded(name):
     assert not is_excluded_name(name)
+
+
+@pytest.mark.parametrize("name", ["._File 8.JPG", "._Кабель miniSAS.JPG", "._a.jpg"])
+def test_macos_service_files_detected(name):
+    assert is_service_name(name)
+
+
+@pytest.mark.parametrize("name", ["File 8.JPG", "_File 8.JPG", ".File 8.JPG", "a._b.jpg"])
+def test_ordinary_names_are_not_service(name):
+    assert not is_service_name(name)
+
+
+def test_macos_service_files_are_not_photos(tmp_path):
+    folder = str(tmp_path / "SN1")
+    for name in ["File 8.JPG", "._File 8.JPG", "._Рентгенограмма.jpg"]:
+        touch(os.path.join(folder, name))
+
+    scan = list_photos(folder)
+    assert scan.photos == ["File 8.JPG"]
+    assert scan.excluded == []
+
+    only_service = str(tmp_path / "SN2")
+    touch(os.path.join(only_service, "._File 1.JPG"))
+    result = find_photo_folders(str(tmp_path))
+    assert [f.path for f in result.folders] == [folder]
 
 
 # --- сортировка ---------------------------------------------------------------
