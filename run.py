@@ -1,4 +1,5 @@
 """Точка входа. Без аргументов — окно программы, с аргументами — консольный режим (run.py --help).
+Ключи --qt и --tk выбирают окна на этот запуск, не меняя настройку interface.
 
 Работает и в обычном, и в embeddable Python (где sys.path задаётся ._pth-файлом).
 """
@@ -11,14 +12,18 @@ sys.path.insert(0, os.path.join(APP_DIR, "src"))
 
 
 def main():
-    if len(sys.argv) > 1:
+    if sys.argv[1:] in (["--qt"], ["--tk"]):
+        from photo_renamer import launcher
+
+        launcher.main(sys.argv[1][2:])
+    elif len(sys.argv) > 1:
         from photo_renamer import cli
 
         cli.main()
     else:
-        from photo_renamer.gui import app
+        from photo_renamer import launcher
 
-        app.main()
+        launcher.main()
 
 
 if __name__ == "__main__":
