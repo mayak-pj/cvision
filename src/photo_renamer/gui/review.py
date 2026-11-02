@@ -6,76 +6,59 @@
 пишется в лог и может быть отменено.
 """
 
-import os
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox, ttk
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
-from .. import config as cfg, grouping, matcher, names as names_mod, oplog, renamer
-from ..cache import PhotoCache
-from ..reference import category_key, load_reference
-from ..report import build_report, format_report
+from .. import config as cfg, grouping, review_session  # noqa: F401 — cfg подменяют тесты
+from ..review_session import ALTERNATIVES, MAX_THUMB, MIN_THUMB, THUMB_STEP, ReviewSession  # noqa: F401
 from . import theme
-from ..scanner import natural_key
 from .photoview import LargeView
 from .thumbgrid import to_photo
 
 TITLE = "Переименование папок"
-# Размер миниатюр в строках таблицы: по умолчанию крупный, меняется Ctrl+колесом и кнопками
-# «−» и «+». Значение запоминается в настройках. Верхняя граница — размер миниатюры в кэше:
-# крупнее пришлось бы заново читать исходные файлы (на сетевых дисках это долго).
-MIN_THUMB, MAX_THUMB, THUMB_STEP = 48, 320, 24
-ALTERNATIVES = 3          # сколько вариантов показывать под цифрами; следующая цифра — отказ
 BUTTON_GAP = 4            # одинаковый зазор между всеми кнопками окна
 SIDE_PADDING = 44         # полоса прокрутки, рамки и отступы правой колонки
 MIN_SIDE_WIDTH, MAX_SIDE_WIDTH = 260, 460
-STATUS_TEXT = {
-    matcher.STATUS_OK: "распознано",
-    matcher.STATUS_SIDE_RULE: "по правилу сторон",
-    matcher.STATUS_CHECK: "ПРОВЕРЬТЕ",
-    matcher.STATUS_MANUAL: "выбрано вручную",
-    matcher.STATUS_ALREADY_NAMED: "уже названо",
-    matcher.STATUS_LOW_CONFIDENCE: "НЕ УВЕРЕНА",
-    matcher.STATUS_NO_MATCH: "НЕ ПОХОЖЕ НИ НА ЧТО",
-    matcher.STATUS_EXCLUDED: "не переименовывать",
-    matcher.STATUS_UNREADABLE: "не прочитано",
-}
+# столбец таблицы → поле сортировки; у остальных столбцов имена совпадают
+SORT_FIELDS = {"#0": review_session.SORT_PHOTO}
 
 
 class Cancelled(Exception):
     pass
 
 
+def _from_session(name: str) -> property:
+    """Состояние живёт в ReviewSession, окно только обращается к нему."""
+    return property(lambda self: getattr(self.session, name),
+                    lambda self, value: setattr(self.session, name, value))
+
+
 class BatchWindow(tk.Toplevel):
+    group = _from_session("group")
+    cache = _from_session("cache")
+    log = _from_session("log")
+    queue = _from_session("queue")
+    total = _from_session("total")
+    model = _from_session("model")
+    match = _from_session("match")
+    folder = _from_session("folder")
+    categories = _from_session("categories")
+    reference_categories = _from_session("reference_categories")
+    reports = _from_session("reports")
+
     def __init__(self, master, group: grouping.FolderGroup, app_config, on_done=None, names=None):
         super().__init__(master)
-        self.group = group
         self.app_config = app_config
-        # список категорий общий с редактором эталона: иначе два окна держат по своей копии
-        # и то, что добавлено в одном, затирается сохранением из другого
-        self.names = names if names is not None else names_mod.NamesList(app_config.names_path())
+        self.session = ReviewSession(group, app_config, names)
+        self.names = self.session.names
         self.on_done = on_done
-        self.cache = PhotoCache(app_config.cache_path(), app_config.cache_max_mb)
-        self.log = oplog.RunLog(app_config.logs_path(), oplog.folder_label(group.reference.path) + "_группа")
-        self.queue: List[grouping.FolderInfo] = list(group.targets)
-        self.total = len(self.queue)
-        self.done_folders = 0
-        self.model: Optional[matcher.ReferenceModel] = None
-        self.match: Optional[matcher.FolderMatch] = None
-        # (категория, подсказанное число ракурсов): по нему видно, задал ли человек своё
-        self._suggested_sides: Optional[Tuple[str, int]] = None
-        self.folder: Optional[grouping.FolderInfo] = None
-        self.categories: List[str] = []
-        self.reports: List[str] = []         # отчёты по папкам: показываются одним окном в конце
         self._photos: Dict[str, tk.PhotoImage] = {}
         self._row_index: Dict[str, int] = {}
         self.thumb_size = int(getattr(app_config, "review_thumb", 96))
         self._busy = False
         self._cancel = False
-        self._last_plan: Optional[renamer.RenamePlan] = None
-        self._undo: List[List[tuple]] = []      # шаги ручных правок для Ctrl+Z
-        self._display_order: List[int] = []     # порядок строк, зафиксированный до следующей сортировки
 
         self.title(TITLE)
         self.minsize(900, 600)
@@ -131,9 +114,6 @@ class BatchWindow(tk.Toplevel):
         self.tree = ttk.Treeview(table, columns=("new", "confidence", "status"), selectmode="extended",
                                  style="Review.Treeview")
         # по заголовкам столбцов сортируют щелчком: первый щелчок — по возрастанию, второй — наоборот
-        # по умолчанию сортируем по новому имени: одинаковые детали оказываются рядом,
-        # и проверять их удобнее, чем в порядке съёмки
-        self.sort_column, self.sort_reverse = "new", False
         for column, title in self.COLUMN_TITLES:
             self.tree.heading(column, text=title, command=lambda c=column: self.sort_by(c))
         self._show_sort_marks()
@@ -246,9 +226,7 @@ class BatchWindow(tk.Toplevel):
         self.header_var.set("Чтение эталона: %s" % self.group.reference.path)
         self._busy = True
         try:
-            reference = load_reference(self.group.reference.path)
-            self.model = matcher.ReferenceModel.build(reference, self.app_config.extractor(), self._progress,
-                                                      feature_source=self.cache.extract_many)
+            self.session.load_model(self._progress)
         except Cancelled:
             self.close()
             return
@@ -258,29 +236,20 @@ class BatchWindow(tk.Toplevel):
             return
         finally:
             self._busy = False
-        self.reference_categories = [c.name for c in self.model.categories]
-        self.categories = self._all_categories()
-        self.log.write_text("Эталон: %s\nПапок в группе: %d" % (self.group.reference.path, self.total))
-        for warning in self.model.warnings:
-            self.log.write_text("ВНИМАНИЕ: " + warning)
         self._refresh_categories()
         self.next_folder()
 
     def next_folder(self) -> None:
         # Отмена последнего переименования остаётся доступной и после перехода к следующей папке:
         # отчёт по папке больше не показывается, и это единственная возможность передумать.
-        if not self.queue:
+        if not self.session.advance():
             self.finish()
             return
-        self.folder = self.queue.pop(0)
-        self.done_folders += 1
-        self.header_var.set("Папка %d из %d: %s" % (self.done_folders, self.total, self.folder.path))
+        self.header_var.set(self.session.header_text())
         self.status_var.set("Чтение фото…")
         self._busy = True
         try:
-            self.match = matcher.match_folder(self.model, self.folder.path, self.folder.scan.photos,
-                                             self.app_config.match, self._progress,
-                                             feature_source=self.cache.extract_many,)
+            self.session.match_current(self._progress)
         except Cancelled:
             self.close()
             return
@@ -297,87 +266,41 @@ class BatchWindow(tk.Toplevel):
 
     COLUMN_TITLES = (("#0", "Фото"), ("new", "Новое имя"),
                      ("confidence", "Уверенность"), ("status", "Состояние"))
-    SORT_KEYS = {
-        "order": lambda p: (p.index,),
-        "#0": lambda p: (natural_key(p.filename), p.index),
-        "new": lambda p: (natural_key(p.new_name or ""), p.index),
-        "confidence": lambda p: (p.confidence, p.index),
-        "status": lambda p: (STATUS_TEXT.get(p.status, ""), p.index),
-    }
 
     def sort_by(self, column: str) -> None:
         """Щелчок по заголовку столбца: сортировка по нему, повторный щелчок — в обратную сторону."""
-        self.sort_reverse = not self.sort_reverse if column == self.sort_column else False
-        self.sort_column = column
+        self.session.sort_by(SORT_FIELDS.get(column, column))
         self._show_sort_marks()
-        self.resort()
+        self.render_rows()
 
     def resort(self) -> None:
-        """Пересчитывает порядок строк по выбранному столбцу и показывает таблицу заново.
-
-        Между сортировками порядок зафиксирован: после правки имена меняются и у соседей
-        (программа передаёт освободившееся имя другому фото), и если пересортировывать каждый
-        раз, неразобранные строки прыгают выше уже сделанных. Тогда приходится возвращаться
-        вверх, а работа должна идти сверху вниз.
-        """
-        photos = sorted(self.match.photos, key=self.SORT_KEYS.get(self.sort_column, self.SORT_KEYS["order"]),
-                        reverse=self.sort_reverse)
-        self._display_order = [photo.index for photo in photos]
+        """Пересчитывает порядок строк по выбранному столбцу и показывает таблицу заново."""
+        self.session.resort()
         self.render_rows()
 
     def _show_sort_marks(self) -> None:
-        arrow = " ↑" if not self.sort_reverse else " ↓"
+        arrow = " ↑" if not self.session.sort_reverse else " ↓"
         for column, title in self.COLUMN_TITLES:
-            self.tree.heading(column, text=title + (arrow if column == self.sort_column else ""))
+            current = SORT_FIELDS.get(column, column) == self.session.sort_column
+            self.tree.heading(column, text=title + (arrow if current else ""))
         theme.fit_column_headers(self.tree)
-
-    def _display_photos(self) -> List:
-        """Фото в порядке показа. Порядок задаётся сортировкой и держится до следующей."""
-        if not self._display_order:
-            return list(self.match.photos)
-        return [self.match.photos[index] for index in self._display_order]
 
     def render_rows(self) -> None:
         # выделение запоминается по фото: строки пересоздаются, и их идентификаторы меняются
         selected = set(self._selected_indexes())
         self.tree.delete(*self.tree.get_children())
         self._row_index.clear()
-        for photo in self._display_photos():
-            new = photo.new_name or ("" if photo.identified else "— не переименовывать —")
-            tags = []
-            if photo.status in (matcher.STATUS_LOW_CONFIDENCE, matcher.STATUS_NO_MATCH, matcher.STATUS_SIDE_RULE,
-                                matcher.STATUS_CHECK):
-                tags.append("doubt")
-            elif photo.status == matcher.STATUS_MANUAL:
-                tags.append("manual")
-            elif photo.status in (matcher.STATUS_EXCLUDED, matcher.STATUS_UNREADABLE):
-                tags.append("skip")
-            iid = self.tree.insert("", "end", text=" " + photo.filename, values=(
-                new, "%.0f%%" % photo.confidence if photo.confidence else "", STATUS_TEXT.get(photo.status, "")),
-                image=self._photos.get(photo.filename, ""), tags=tuple(tags))
+        for photo in self.session.display_photos():
+            kind = review_session.row_kind(photo)
+            iid = self.tree.insert("", "end", text=" " + photo.filename, values=review_session.row_values(photo),
+                                   image=self._photos.get(photo.filename, ""), tags=(kind,) if kind else ())
             self._row_index[iid] = photo.index
             if photo.index in selected:
                 self.tree.selection_add(iid)
         self._update_counts()
 
-    @staticmethod
-    def _is_doubtful(photo) -> bool:
-        return photo.status in (matcher.STATUS_CHECK, matcher.STATUS_LOW_CONFIDENCE, matcher.STATUS_NO_MATCH,
-                                matcher.STATUS_SIDE_RULE, matcher.STATUS_UNREADABLE)
-
     def _update_counts(self) -> None:
-        total = len(self.match.photos)
-        rename = sum(1 for p in self.match.photos if p.new_name)
-        unknown = len(self.match.unidentified())
-        check = sum(1 for p in self.match.photos if self._is_doubtful(p))
-        text = "Фото: %d, будет переименовано: %d, проверить: %d" % (total, rename, check)
-        if unknown:
-            text += ", не опознано: %d" % unknown
-        if self.match.strict:
-            text += "   (состав совпадает с эталоном: имя предложено каждому фото)"
-        if self.folder is not None and self.folder.scan.order_differs:
-            text += "   (порядок съёмки не совпадает с порядком имён — используется порядок съёмки)"
-        self.status_var.set(text)
+        self.status_var.set(self.session.counts_text())
 
     def _apply_thumb_size(self) -> None:
         self.style.configure("Review.Treeview", rowheight=self.thumb_size + 8)
@@ -387,7 +310,7 @@ class BatchWindow(tk.Toplevel):
 
     def set_thumb_size(self, size: int) -> None:
         """Размер фото в строках таблицы. Миниатюры перерисовываются из кэша, файлы не перечитываются."""
-        size = max(MIN_THUMB, min(MAX_THUMB, int(size)))
+        size = review_session.clamp_thumb_size(size)
         if size == self.thumb_size:
             return
         self.thumb_size = size
@@ -410,8 +333,7 @@ class BatchWindow(tk.Toplevel):
         if self.match is None or not 0 <= index < len(self.match.photos):
             return None
         try:
-            image = self.cache.thumbnail(os.path.join(self.folder.path, self.match.photos[index].filename))
-            return to_photo(image, size)
+            return to_photo(self.session.thumbnail(self.match.photos[index]), size)
         except Exception:
             return None
 
@@ -425,8 +347,7 @@ class BatchWindow(tk.Toplevel):
             iid, index = rows[position]
             photo = self.match.photos[index]
             try:
-                image = self.cache.thumbnail(os.path.join(self.folder.path, photo.filename))
-                self._photos[photo.filename] = to_photo(image, self.thumb_size)
+                self._photos[photo.filename] = to_photo(self.session.thumbnail(photo), self.thumb_size)
                 if self.tree.exists(iid):
                     self.tree.item(iid, image=self._photos[photo.filename])
             except Exception:
@@ -446,8 +367,7 @@ class BatchWindow(tk.Toplevel):
                 indexes = [self._row_index[row]]
         if not indexes or self.match is None or self.folder is None:
             return "break"
-        names = [p.filename for p in self.match.photos]
-        LargeView(self, self.folder.path, names, indexes[0], self.cache)
+        LargeView(self, self.folder.path, self.session.photo_names(), indexes[0], self.cache)
         return "break"
 
     # «<<Undo>>» — обязательно: на macOS Cmd+Z перехватывает стандартное меню «Правка»,
@@ -457,28 +377,14 @@ class BatchWindow(tk.Toplevel):
         theme.bind_shortcut(widget, "z", self.undo_edit, in_fields=True)
         widget.bind("<<Undo>>", self.undo_edit)
 
-    _ABSENT = object()                       # признак «ручной правки для этого фото не было»
-
-    def _remember(self, indexes: List[int]) -> None:
-        """Запоминает, что было до правки: по Ctrl+Z всё вернётся одним шагом."""
-        step = [(index, self.match.manual.get(index, self._ABSENT)) for index in indexes]
-        if step:
-            self._undo.append(step)
-
     def undo_edit(self, event=None):
         """Ctrl+Z — отменяет последнюю ручную правку: и выбор цифрой, и Enter, и кнопки, и список."""
-        if not self._undo:
+        indexes = self.session.undo_edit()
+        if indexes is None:
             self.status_var.set("Отменять нечего")
             return "break"
-        step = self._undo.pop()
-        for index, previous in step:
-            if previous is self._ABSENT:
-                self.match.manual.pop(index, None)
-            else:
-                self.match.manual[index] = previous
-        matcher.solve(self.match)
         self.render_rows()
-        self._select_photos([index for index, _ in step])
+        self._select_photos(indexes)
         self._update_counts()
         return "break"
 
@@ -497,15 +403,7 @@ class BatchWindow(tk.Toplevel):
         if not indexes:
             return "break"
         position = self._selected_position()
-        self._remember(indexes)
-        confirmed = 0
-        for index in indexes:
-            photo = self.match.photos[index]
-            if photo.identified and photo.status != matcher.STATUS_MANUAL:
-                matcher.set_category(self.match, index, photo.category.key)
-                confirmed += 1
-        if not confirmed:
-            self._undo.pop()                  # подтверждать было нечего — шага не было
+        self.session.confirm(indexes)
         self.render_rows()
         # имя не меняется, значит строка осталась на своём месте: идём на строку ниже
         self._select_position(None if position is None else position + 1)
@@ -553,39 +451,11 @@ class BatchWindow(tk.Toplevel):
                 self._on_row_select()        # панель вариантов — для нового выбранного фото
                 return
 
-    def _settled_categories(self) -> Dict[str, int]:
-        """Сколько фото каждой категории вы уже подтвердили: задали вручную или они уже названы."""
-        settled: Dict[str, int] = {}
-        for photo in self.match.photos:
-            if photo.identified and photo.status in (matcher.STATUS_MANUAL, matcher.STATUS_ALREADY_NAMED):
-                settled[photo.category.name] = settled.get(photo.category.name, 0) + 1
-        return settled
-
     def _exhausted_categories(self) -> set:
-        """Категории, которых в папке, скорее всего, больше нет: вы уже подтвердили столько
-        фото, сколько их в эталоне.
-
-        Считаются только подтверждённые вами фото, а не догадки программы: иначе неверная
-        догадка закрывала бы категорию, и выбрать её стало бы негде. Из списка категорий
-        внизу такая категория не исчезает — её всегда можно выбрать вручную.
-        """
-        if self.match is None:
-            return set()
-        capacity = {c.name: len(c.photos) for c in self.model.categories}
-        settled = self._settled_categories()
-        return {name for name, count in settled.items() if count >= capacity.get(name, 0) > 0}
+        return self.session.exhausted_categories()
 
     def _alternatives(self, photo) -> List:
-        """Другие подходящие категории — без той, что уже в столбце «Новое имя», и без тех,
-        что по составу эталона уже закрыты вашими же пометками.
-
-        Предлагать то же самое, что программа и так выбрала, незачем: если имя верное, его
-        просто оставляют. А категория, которой в папке ровно столько же, сколько вы уже
-        отметили, третий раз встретиться не может — место в списке она занимает зря.
-        """
-        current = photo.category.name if photo.identified else None
-        exhausted = self._exhausted_categories() - {current}
-        return [c for c in photo.candidates if c.category != current and c.category not in exhausted]
+        return self.session.alternatives(photo)
 
     def apply_candidate(self, number: int) -> None:
         """Клавиши 1 и 2: каждому выбранному фото назначается его собственный вариант с этим номером."""
@@ -593,15 +463,7 @@ class BatchWindow(tk.Toplevel):
         if not indexes:
             return
         position = self._selected_position()
-        self._remember(indexes)
-        applied = 0
-        for index in indexes:
-            candidates = self._alternatives(self.match.photos[index])
-            if len(candidates) >= number:
-                matcher.set_category(self.match, index, category_key(candidates[number - 1].category))
-                applied += 1
-        if not applied:
-            self._undo.pop()                  # ничего не изменилось — и отменять нечего
+        if not self.session.apply_candidate(indexes, number):
             return
         self.render_rows()
         self._select_position(None if position is None else position + 1)
@@ -630,11 +492,6 @@ class BatchWindow(tk.Toplevel):
                    style="Candidate.TButton",
                    command=self.exclude_selected).pack(fill="x", pady=(0, BUTTON_GAP))
 
-    def _all_categories(self) -> List[str]:
-        """Категории эталона плюс добавленные вручную (names.txt рядом с программой)."""
-        extra = [name for name in self.names.names() if name not in self.reference_categories]
-        return self.reference_categories + sorted(extra)
-
     def add_category(self) -> None:
         """Деталь, которой нет в эталоне: набранное в поиске имя сразу попадает в список.
 
@@ -647,16 +504,10 @@ class BatchWindow(tk.Toplevel):
             self.search_entry.focus_set()
             return
         try:
-            # число ракурсов здесь не решается: его показывает и даёт исправить поле
-            # «Ракурсов» — оно же применяется, когда категорию назначают фото
-            name = self.names.add(typed, self.names.sides_for(typed))
+            name = self.session.add_category(typed)
         except ValueError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self)
             return
-        self.names.save()
-        if self.match is not None:
-            matcher.add_category(self.match, name, self.names.sides_for(name))
-        self.categories = self._all_categories()
         self.search_var.set("")
         self._refresh_categories()
         self._select_category(name)
@@ -668,15 +519,13 @@ class BatchWindow(tk.Toplevel):
             messagebox.showinfo(TITLE, "Выберите категорию в списке.", parent=self)
             return
         name = self.categories_list.get(selection[0])
-        if name in self.reference_categories:
+        if self.session.is_reference_category(name):
             messagebox.showinfo(TITLE, "«%s» — категория эталона, она задаётся образцом.\n"
                                        "Удалить её можно только из эталона." % name, parent=self)
             return
         if not messagebox.askyesno(TITLE, "Удалить «%s» из списка категорий?" % name, parent=self):
             return
-        self.names.remove(name)
-        self.names.save()
-        self.categories = self._all_categories()
+        self.session.remove_category(name)
         self._refresh_categories()
 
     def _select_category(self, name: str) -> None:
@@ -689,38 +538,22 @@ class BatchWindow(tk.Toplevel):
         self._show_sides()
 
     def _show_sides(self, force: bool = False) -> None:
-        """Показывает, сколько ракурсов получит выбранная категория, — это можно исправить.
-
-        Подставляется то, что программа сделала бы сама: у категории эталона — число из
-        образца (править его нечего, поле заблокировано), у своей — запомненное число или,
-        если фото выделено больше, число выделенных фото. Заданное руками число не
-        перебивается, пока не выбрана другая категория.
-        """
+        """Показывает, сколько ракурсов получит выбранная категория, — это можно исправить."""
         category = self._current_category()
-        if category is None or (not force and self._sides_are_set_by_hand(category)):
+        if category is None:
             return
-        value = self._auto_sides(category)
+        value = self.session.suggest_sides(category, len(self._selected_indexes()), self._sides_field(), force)
+        if value is None:
+            return
         self.sides_var.set(value)
-        self._suggested_sides = (category, value)
-        self.sides_spin.configure(
-            state="disabled" if category in self.reference_categories else "normal")
+        self.sides_spin.configure(state="disabled" if self.session.is_reference_category(category) else "normal")
 
-    def _auto_sides(self, category: str) -> int:
-        """Сколько ракурсов программа взяла бы сама."""
-        if category in self.reference_categories:
-            known = (self.match.model.reference.categories.get(category_key(category))
-                     if self.match is not None else None)
-            return known.sides if known is not None else 1
-        return max(self.names.sides_for(category), len(self._selected_indexes()) or 1)
-
-    def _sides_are_set_by_hand(self, category: str) -> bool:
-        """Человек сам задал число ракурсов этой категории — значит, оно важнее подсказки."""
-        if self._suggested_sides is None or self._suggested_sides[0] != category:
-            return False
+    def _sides_field(self) -> Optional[int]:
+        """Значение поля «Ракурсов»; None — в поле мусор."""
         try:
-            return int(self.sides_var.get()) != self._suggested_sides[1]
-        except (tk.TclError, ValueError):       # в поле мусор — считаем, что не задано
-            return False
+            return int(self.sides_var.get())
+        except (tk.TclError, ValueError):
+            return None
 
     def _current_category(self) -> Optional[str]:
         selection = self.categories_list.curselection()
@@ -728,7 +561,7 @@ class BatchWindow(tk.Toplevel):
 
     def _refresh_categories(self) -> None:
         self.categories_list.delete(0, "end")
-        for name in names_mod.filter_names(self.search_var.get(), self.categories):
+        for name in self.session.filter_categories(self.search_var.get()):
             self.categories_list.insert("end", name)
         self._fit_side_panel()
 
@@ -758,38 +591,10 @@ class BatchWindow(tk.Toplevel):
         if not indexes:
             messagebox.showinfo(TITLE, "Выберите фото в таблице.", parent=self)
             return
-        key = None
-        if category is not None:
-            key = self._category_key(category, len(indexes))
         position = self._selected_position()
-        self._remember(indexes)
-        for index in indexes:
-            matcher.set_category(self.match, index, key)
+        self.session.apply_category(indexes, category, self._sides_field())
         self.render_rows()
         self._select_position(None if position is None else position + 1)
-
-    def _category_key(self, category: str, photos: int) -> str:
-        """Ключ категории для раскладки. Заодно решает вопрос с ракурсами у своих категорий.
-
-        Число берётся из поля «Ракурсов» — там видно, что получится, и это можно исправить
-        до нажатия кнопки. Само поле подставляет то, что программа сделала бы без спроса:
-        запомненное число ракурсов, а для новой категории — число выделенных фото, потому что
-        несколько фото одной новой категории — это ракурсы одной детали, а не разные детали
-        («Стойка многопозиционная фото 1» и «фото 2», а не «Стойка многопозиционная»
-        и «Стойка многопозиционная 2» — замечание с рабочей машины).
-
-        Число ракурсов запоминается в списке категорий. Состав эталона так не меняется:
-        там ракурсы видно по самому образцу.
-        """
-        if category in self.reference_categories:
-            return category_key(category)
-        sides = max(1, int(self.sides_var.get()) if self._sides_are_set_by_hand(category)
-                    else max(self.names.sides_for(category), photos))
-        key = matcher.add_category(self.match, category, sides)
-        if matcher.set_sides(self.match, key, sides) or sides != self.names.sides_for(category):
-            self.names.remember_sides(category, sides)
-            self.names.save()
-        return key
 
     def exclude_selected(self) -> None:
         self.apply_category(None)
@@ -800,7 +605,7 @@ class BatchWindow(tk.Toplevel):
         if self.match is None or str(self.apply_btn["state"]) == "disabled" or self._busy:
             return
         try:
-            plan = renamer.build_plan(self.match)
+            plan = self.session.build_plan()
         except OSError as exc:
             messagebox.showerror(TITLE, "Папка недоступна:\n%s" % exc, parent=self)
             return
@@ -808,55 +613,25 @@ class BatchWindow(tk.Toplevel):
             messagebox.showinfo(TITLE, "Переименовывать нечего.", parent=self)
             self.next_folder()
             return
-        # фото, помеченные «не переименовывать», и нечитаемые файлы — это осознанный выбор,
-        # спрашивать про них незачем; предупреждаем только о тех, что программа не разобрала
-        unresolved = len([p for p in self.match.unidentified()
-                          if p.status not in (matcher.STATUS_EXCLUDED, matcher.STATUS_UNREADABLE)])
+        unresolved = self.session.unresolved_count()
         if unresolved:
-            question = ("Не опознано фото: %d. Их имена останутся прежними, а у остальных номера\n"
-                        "будут идти по порядку съёмки без учёта пропущенных — потом будет сложно\n"
-                        "понять, какой ракурс к какой детали.\n\n"
-                        "Лучше разобрать их сейчас: включите «Показать только требующие проверки»\n"
-                        "и назначьте категории клавишами 1 и 2.\n\n"
-                        "Всё равно переименовать %d файл(ов)?") % (unresolved, len(plan.pending))
+            question = review_session.unresolved_question(unresolved, len(plan.pending))
             if not messagebox.askyesno(TITLE, question, parent=self):
                 return
-        # обычного «переименовать N файлов?» больше нет: человек и так нажал кнопку
-        # «Переименовать папку», а ошибку возвращает «Отменить переименование»
-        renamer.apply_plan(plan, self.log)
-        self._last_plan = plan
-        report = build_report(self.match, len(self.folder.scan.excluded), self.app_config.problem_categories)
-        text = format_report(report, plan, applied=True)
-        self.log.write_text(text)
+        summary = self.session.apply_plan(plan)
         self.undo_btn.configure(state="normal")
-        self.status_var.set("Переименовано: %d, пропущено: %d, ошибок: %d"
-                            % (plan.count(oplog.RESULT_OK), plan.count(oplog.RESULT_SKIPPED),
-                               plan.count(oplog.RESULT_ERROR)))
-        # Отчёт по каждой папке не показывается: он копится и выдаётся один раз в конце,
-        # иначе после каждой папки приходится закрывать окно (замечание с рабочей машины).
-        self.reports.append(text)
+        self.status_var.set(summary)
         self.next_folder()
 
     def undo_folder(self) -> None:
-        if self._last_plan is None:
+        summary = self.session.undo_folder()
+        if summary is None:
             return
-        done = [item for item in self._last_plan.items if item.result == oplog.RESULT_OK]
-        folder = self._last_plan.folder
-        plan = renamer.RenamePlan(folder,
-                                  [renamer.RenameItem(i.new, i.old, i.category, None, "отмена") for i in
-                                   reversed(done)])
-        renamer.apply_plan(plan, self.log)
-        self._last_plan = None
-        if self.reports:
-            self.reports.pop()
         self.undo_btn.configure(state="disabled")
-        self.status_var.set("Переименование папки «%s» отменено: %d файл(ов)"
-                            % (os.path.basename(os.path.normpath(folder)), plan.count(oplog.RESULT_OK)))
+        self.status_var.set(summary)
 
     def skip_folder(self) -> None:
-        if self.folder is not None:
-            self.log.record(self.folder.path, oplog.ACTION_KEEP, oplog.RESULT_SKIPPED,
-                            message="папка пропущена пользователем")
+        self.session.skip_folder()
         self.next_folder()
 
     def finish(self) -> None:
@@ -864,22 +639,13 @@ class BatchWindow(tk.Toplevel):
         self.apply_btn.configure(state="disabled")
         self.skip_btn.configure(state="disabled")
         self.tree.delete(*self.tree.get_children())
-        # Окна с отчётом нет совсем: оно закрывало работу и его приходилось закрывать руками
-        # (замечание с рабочей машины). Сами отчёты никуда не делись — они пишутся в файл
-        # рядом с программой, и путь к нему виден внизу окна.
-        self.status_var.set("Группа обработана. Переименовано папок: %d.   Лог: %s   Отчёт: %s"
-                            % (len(self.reports), self.log.csv_path, self.log.txt_path))
+        self.status_var.set(self.session.finish_text())
 
     def close(self) -> None:
         if self._busy:
             self._cancel = True
             return
-        self.log.close()
-        self.cache.close()
-        try:                       # выбранный размер фото должен сохраниться до следующего запуска
-            cfg.save_config(self.app_config)
-        except OSError:
-            pass
+        self.session.close()
         if self.on_done:
             self.on_done()
         self.destroy()

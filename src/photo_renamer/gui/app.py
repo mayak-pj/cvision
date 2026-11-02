@@ -4,7 +4,6 @@
 прогресса обновляют интерфейс (update()), а кнопка «Прервать» останавливает анализ.
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -16,6 +15,7 @@ from .. import config as cfg
 from .. import grouping
 from ..cache import PhotoCache
 from ..names import NamesList
+from ..project_session import MARK_NO, MARK_REFERENCE, ProjectSession
 from . import theme
 from .editor import ReferenceEditor
 from .worker import Cancelled, Worker
@@ -24,11 +24,6 @@ from .review import BatchWindow
 TITLE = "CV"
 
 # Отметки в таблице пишутся словами: значки вроде «✔» на Windows 7 в tkinter выводятся не всюду.
-# Галочка эталона: её ставит человек щелчком по столбцу, а программа — на самую
-# переименованную папку группы
-MARK_REFERENCE = "\u2713"
-MARK_YES = "да"
-MARK_NO = "нет"
 
 
 def open_in_file_manager(path: str) -> None:
@@ -38,12 +33,6 @@ def open_in_file_manager(path: str) -> None:
         subprocess.Popen(["open", path])
     else:
         subprocess.Popen(["xdg-open", path])
-
-
-def _percent(share: float) -> int:
-    """Доля в процентах. 100 пишется только когда названо всё: 99.6 % — это ещё не готово."""
-    value = int(round(share * 100))
-    return min(value, 99) if share < 1 else value
 
 
 def _tooltip(widget, text: str) -> None:
@@ -72,13 +61,21 @@ def _tooltip(widget, text: str) -> None:
     widget.bind("<Leave>", hide, add="+")
 
 
+def _from_session(name: str) -> property:
+    """Состояние живёт в ProjectSession, окно только обращается к нему."""
+    return property(lambda self: getattr(self.session, name),
+                    lambda self, value: setattr(self.session, name, value))
+
+
 class MainWindow(tk.Tk):
+    analysis = _from_session("analysis")
+    project_root = _from_session("project_root")
+
     def __init__(self, app_config: cfg.AppConfig, config_warnings: List[str] = ()):
         super().__init__()
         self.app_config = app_config
+        self.session = ProjectSession(app_config)
         self.names = NamesList(app_config.names_path())
-        self.analysis: Optional[grouping.ProjectAnalysis] = None
-        self.project_root = ""
         self._busy = False
         self._cancel = False
         self._close_requested = False
@@ -235,23 +232,11 @@ class MainWindow(tk.Tk):
 
     # --- состояние между запусками ----------------------------------------------------------
 
-    def _state_path(self) -> str:
-        return os.path.join(os.path.dirname(self.app_config.cache_path()), "state.json")
-
     def _load_state(self) -> dict:
-        try:
-            with open(self._state_path(), encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            return {}
+        return self.session.load_state()
 
     def _save_state(self) -> None:
-        try:
-            os.makedirs(os.path.dirname(self._state_path()), exist_ok=True)
-            with open(self._state_path(), "w", encoding="utf-8") as f:
-                json.dump({"project": self.root_var.get().strip()}, f, ensure_ascii=False)
-        except OSError:
-            pass
+        self.session.save_state(self.root_var.get().strip())
 
     # --- анализ -------------------------------------------------------------------------------
 
@@ -291,32 +276,7 @@ class MainWindow(tk.Tk):
         self._set_busy(True)
         self.status_var.set("Поиск папок с фото…")
 
-        app_config = self.app_config
-
-        def job(post, cancelled):
-            # выполняется в отдельном потоке: только чтение файлов, ни одного обращения к окну
-            cache = PhotoCache(app_config.cache_path(), app_config.cache_max_mb)
-
-            def folder_started(number, total, path):
-                post(("folder", number, total, path))
-                if cancelled():
-                    raise Cancelled()
-
-            def photo_read(done, total):
-                post(("progress", done, total))
-                if cancelled():
-                    raise Cancelled()
-
-            extractor = app_config.extractor()
-            try:
-                return grouping.analyze_project(
-                    [root], extractor, app_config.match.for_features(extractor.encoder is not None),
-                    app_config.group_threshold,
-                    feature_source=cache.extract_many, sort=app_config.sort, date_source=cache.shot_time,
-                    on_folder=folder_started, on_progress=photo_read)
-            finally:
-                cache.close()
-
+        job = self.session.analysis_job(root, PhotoCache)
         self.worker.start(job, self._on_worker_message, self._on_analysis_done)
 
     def _on_worker_message(self, message) -> None:
@@ -345,41 +305,15 @@ class MainWindow(tk.Tk):
             self.destroy()
 
     def _summary(self) -> str:
-        a = self.analysis
-        need = sum(not g.reference_is_ready for g in a.groups)
-        text = "Папок с фото: %d, групп: %d. " % (len(a.folders), len(a.groups))
-        text += ("Нужно создать эталонов: %d." % need) if need else "Все эталоны готовы."
-        if a.errors:
-            text += " Недоступных папок: %d." % len(a.errors)
-        return text
+        return self.session.summary()
 
     # --- отображение ------------------------------------------------------------------------
 
     def _display_path(self, path: str) -> str:
-        root = self.project_root
-        if root:
-            try:
-                rel = os.path.relpath(path, root)
-            except ValueError:  # другой диск на Windows
-                return path
-            if not rel.startswith(".."):
-                return os.path.join(os.path.basename(os.path.normpath(root)), rel) if rel != "." else \
-                    os.path.basename(os.path.normpath(root))
-        return path
-
-    def _rename_mark(self, group: grouping.FolderGroup, folder: grouping.FolderInfo) -> str:
-        """Отметка «переименовывать ли папку». У эталона её нет: он образец, а не цель."""
-        if folder is group.reference:
-            return ""
-        return MARK_YES if folder.will_rename else MARK_NO
+        return self.session.display_path(path)
 
     def _folder_status(self, group: grouping.FolderGroup, folder: grouping.FolderInfo) -> str:
-        """Насколько папка переименована. В столбце только число: его смысл написан
-        в заголовке «Обработано», а слово в каждой строке лишнее."""
-        status = "%d%%" % _percent(folder.named_share)
-        if folder.unreadable:
-            status += "   не прочитано фото: %d" % folder.unreadable
-        return status
+        return self.session.folder_status(folder)
 
     def _on_resize(self, event) -> None:
         if event.widget is self:
@@ -409,35 +343,23 @@ class MainWindow(tk.Tk):
         if self.analysis is None:
             self._update_buttons()
             return
-        for k, group in enumerate(self.analysis.groups):
-            ready = "эталон готов" if group.reference_is_ready else "нужно создать эталон"
-            gid = self.tree.insert("", "end", text="Группа %d — %s" % (k + 1, ready),
-                                   values=("", "", "", "папок: %d" % len(group.folders), ""), open=True,
-                                   tags=("group",) if group.reference_is_ready else ("group", "not_ready"))
-            self._item_group[gid] = k
-            for folder in group.folders:
-                similarity = grouping.similarity_label(grouping.similarity_to_reference(self.analysis, folder))
-                tags = []
-                if folder is group.reference:
-                    tags.append("reference")
-                    if not folder.is_reference:
-                        tags.append("not_ready")
-                if similarity == "низкое":
-                    tags.append("low")
-                iid = self.tree.insert(gid, "end", text=self._display_path(folder.path),
-                                       values=(MARK_REFERENCE if folder is group.reference else "",
-                                               self._rename_mark(group, folder),
-                                               folder.count, self._folder_status(group, folder), similarity),
-                                       tags=tuple(tags))
-                self._item_folder[iid] = folder
-                self._item_group[iid] = k
-                if folder is selected:
-                    self.tree.selection_set(iid)
-                    self.tree.see(iid)
-        for e in self.analysis.errors:
-            self.tree.insert("", "end", text="Недоступна: %s" % self._display_path(e.path),
-                             values=("", "", "", e.message, ""), tags=("low",))
+        for row in self.session.rows():
+            parent = self._insert_row("", row, selected)
+            for child in row.children:
+                self._insert_row(parent, child, selected)
         self._update_buttons()
+
+    def _insert_row(self, parent: str, row, selected) -> str:
+        iid = self.tree.insert(parent, "end", text=row.text, values=row.values, open=bool(row.children),
+                               tags=row.tags)
+        if row.group is not None:
+            self._item_group[iid] = row.group
+        if row.folder is not None:
+            self._item_folder[iid] = row.folder
+            if row.folder is selected:
+                self.tree.selection_set(iid)
+                self.tree.see(iid)
+        return iid
 
     # --- действия ------------------------------------------------------------------------------
 
@@ -459,15 +381,8 @@ class MainWindow(tk.Tk):
             self.toggle_rename(folder)
 
     def toggle_rename(self, folder: grouping.FolderInfo) -> None:
-        """Снимает или ставит отметку «переименовывать эту папку».
-
-        Нужна, когда программа сочла папку уже названной, а на деле её не переименовывали
-        (или наоборот — папку назвали вручную и трогать её не надо).
-        """
-        group = self.analysis.groups[grouping.group_of(self.analysis, folder)]
-        if folder is group.reference:
+        if not self.session.toggle_rename(folder):
             return
-        folder.include = not folder.will_rename
         self.render()
         self.status_var.set(self._summary())
 
@@ -491,13 +406,11 @@ class MainWindow(tk.Tk):
     def _update_buttons(self) -> None:
         folder = None if self._busy else self._selected_folder()
         group = None if self._busy else self._selected_group()
-        is_ref = folder is not None and self.analysis.groups[group].reference is folder
-        self.reference_btn.configure(state="normal" if folder is not None and not is_ref else "disabled")
-        self.move_btn.configure(state="normal" if folder is not None else "disabled")
-        self.open_btn.configure(state="normal" if folder is not None else "disabled")
-        self.edit_reference_btn.configure(state="normal" if group is not None else "disabled")
-        can_rename = group is not None and self.analysis.groups[group].reference_is_ready
-        self.rename_group_btn.configure(state="normal" if can_rename else "disabled")
+        actions = self.session.available_actions(folder, group)
+        for button, action in ((self.reference_btn, "make_reference"), (self.move_btn, "move"),
+                               (self.open_btn, "open"), (self.edit_reference_btn, "edit_reference"),
+                               (self.rename_group_btn, "rename_group")):
+            button.configure(state="normal" if actions[action] else "disabled")
         self.refresh_btn.configure(state="normal" if self.analysis is not None and not self._busy else "disabled")
 
     def _fill_move_menu(self) -> None:
@@ -505,10 +418,8 @@ class MainWindow(tk.Tk):
         folder = self._selected_folder()
         if folder is None:
             return
-        current = grouping.group_of(self.analysis, folder)
-        for k, group in enumerate(self.analysis.groups):
-            label = "Группа %d (папок: %d)" % (k + 1, len(group.folders))
-            self.move_menu.add_command(label=label, state="disabled" if k == current else "normal",
+        for k, label, enabled in self.session.move_targets(folder):
+            self.move_menu.add_command(label=label, state="normal" if enabled else "disabled",
                                        command=lambda k=k: self.move_selected(k))
         self.move_menu.add_separator()
         self.move_menu.add_command(label="Новая группа", command=lambda: self.move_selected(None))
@@ -517,7 +428,7 @@ class MainWindow(tk.Tk):
         folder = self._selected_folder()
         if folder is None:
             return
-        grouping.move_folder(self.analysis, folder, target)
+        self.session.move_folder(folder, target)
         self.render()
         self.status_var.set(self._summary())
 
@@ -525,7 +436,7 @@ class MainWindow(tk.Tk):
         folder = self._selected_folder()
         if folder is None:
             return
-        grouping.set_reference(self.analysis, folder)
+        self.session.make_reference(folder)
         self.render()
         self.status_var.set(self._summary())
 
@@ -540,11 +451,7 @@ class MainWindow(tk.Tk):
     def refresh(self) -> None:
         if self.analysis is None:
             return
-        cache = PhotoCache(self.app_config.cache_path(), self.app_config.cache_max_mb)
-        try:
-            grouping.refresh_names(self.analysis, sort=self.app_config.sort, date_source=cache.shot_time)
-        finally:
-            cache.close()
+        self.session.refresh(PhotoCache)
         self.render()
         self.status_var.set(self._summary())
 

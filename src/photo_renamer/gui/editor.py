@@ -5,16 +5,13 @@
 отменяется по Ctrl+Z.
 """
 
-import os
 import tkinter as tk
 from tkinter import messagebox, ttk
-from typing import List, Optional
+from typing import Optional
 
-from .. import editing, oplog, renamer
 from ..cache import PhotoCache
+from ..editor_session import EditorSession
 from ..names import NamesList
-from ..reference import is_template_name, load_reference
-from ..scanner import list_photos, natural_key
 from . import theme
 from .photoview import LargeView
 from .thumbgrid import MAX_SIZE, MIN_SIZE, ThumbnailGrid
@@ -36,19 +33,28 @@ class _ThumbnailLoader:
         self.cache.close()
 
 
+def _from_session(name: str) -> property:
+    """Состояние живёт в EditorSession, окно только обращается к нему."""
+    return property(lambda self: getattr(self.session, name),
+                    lambda self, value: setattr(self.session, name, value))
+
+
 class ReferenceEditor(tk.Toplevel):
+    cache = _from_session("cache")
+    log = _from_session("log")
+    photos = _from_session("photos")
+    shown = _from_session("shown")
+    history = _from_session("history")
+
     def __init__(self, master, folder: str, app_config, names: NamesList, on_done=None):
         super().__init__(master)
         self.folder = folder
         self.app_config = app_config
         self.names = names
         self.on_done = on_done
-        self.cache = PhotoCache(app_config.cache_path(), app_config.cache_max_mb)
+        self.session = EditorSession(folder, app_config, names,
+                                     PhotoCache(app_config.cache_path(), app_config.cache_max_mb))
         self.worker = Worker(self)
-        self.log = oplog.RunLog(app_config.logs_path(), "эталон_" + oplog.folder_label(folder))
-        self.photos: List[str] = []          # имена в порядке съёмки (порядок не меняется)
-        self.shown: List[str] = []           # те же имена в порядке показа (см. _display_order)
-        self.history: List[List[renamer.RenameItem]] = []
 
         self.title("%s: %s" % (TITLE, folder))
         self.minsize(900, 560)
@@ -149,47 +155,22 @@ class ReferenceEditor(tk.Toplevel):
 
     def _load_folder(self) -> None:
         try:
-            scan = list_photos(self.folder, sort=self.app_config.sort, date_source=self.cache.shot_time)
+            self.session.load_folder()
         except OSError as exc:
             messagebox.showerror(TITLE, "Не удалось прочитать папку:\n%s" % exc, parent=self)
-            self.photos = []
             return
-        self.photos = list(scan.photos)
-        self.order_differs = scan.order_differs
-        self.shown = self._display_order()
         self.grid_widget.set_items(self._items(), self._template_flags())
         self._refresh_names()
         self._update_status()
 
-    def _display_order(self) -> List[str]:
-        """Порядок показа: названные — по именам, ещё не названные — в порядке съёмки следом.
-
-        Так стороны и экземпляры одной детали («Кабель соединительный 1…4») стоят рядом, и
-        видно, что получилось, а неназванные кадры собраны в конце — с ними и работают.
-        Порядок съёмки (self.photos) при этом не меняется: по нему делятся стороны
-        и нумеруются экземпляры.
-        """
-        named = [name for name in self.photos if is_template_name(name)]
-        rest = [name for name in self.photos if not is_template_name(name)]
-        return sorted(named, key=natural_key) + rest
-
     def _items(self):
-        return [(name, os.path.join(self.folder, name)) for name in self.shown]
+        return self.session.items()
 
     def _template_flags(self):
-        return [is_template_name(name) for name in self.shown]
+        return self.session.template_flags()
 
     def _learn_from_reference(self) -> None:
-        """Если в папке уже есть названные фото, запоминаем их категории и число ракурсов."""
-        try:
-            reference = load_reference(self.folder)
-        except OSError:
-            return
-        categories = [(c.name, c.sides) for c in reference.categories.values()
-                      if any(is_template_name(p.filename) for p in c.photos)]
-        if categories:
-            self.names.learn_from(categories)
-            self.names.save()
+        if self.session.learn_from_reference():
             self._refresh_names()
 
     def _refresh_names(self) -> None:
@@ -228,13 +209,7 @@ class ReferenceEditor(tk.Toplevel):
         self._update_status(loading=None if done >= total else (done, total))
 
     def _update_status(self, loading=None) -> None:
-        named = sum(self._template_flags())
-        text = "Фото: %d, названо по шаблону: %d, осталось: %d" % (len(self.photos), named, len(self.photos) - named)
-        if getattr(self, "order_differs", False):
-            text += "   (порядок съёмки не совпадает с порядком имён — показан порядок съёмки)"
-        if loading:
-            text += "   загрузка миниатюр: %d из %d" % loading
-        self.status_var.set(text)
+        self.status_var.set(self.session.status_text(loading))
 
     def _zoom(self, delta: int) -> None:
         self.grid_widget.set_cell_size(min(MAX_SIZE, max(MIN_SIZE, self.grid_widget.cell_size + delta)))
@@ -252,11 +227,10 @@ class ReferenceEditor(tk.Toplevel):
             self.search_entry.focus_set()
             return
         try:
-            name = self.names.add(typed, self.sides_var.get())
+            name = self.session.add_name(typed, self.sides_var.get())
         except ValueError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self)
             return
-        self.names.save()
         self.search_var.set("")
         self._refresh_names()
         self._select_name(name)
@@ -276,8 +250,7 @@ class ReferenceEditor(tk.Toplevel):
             messagebox.showinfo(TITLE, "Выберите категорию в списке.", parent=self)
             return
         if messagebox.askyesno(TITLE, "Удалить «%s» из списка категорий?" % name, parent=self):
-            self.names.remove(name)
-            self.names.save()
+            self.session.remove_name(name)
             self._refresh_names()
 
     def rename_selected(self) -> None:
@@ -290,7 +263,8 @@ class ReferenceEditor(tk.Toplevel):
             messagebox.showinfo(TITLE, "Выделите фото слева.", parent=self)
             return
         try:
-            assignment = editing.assign(self.folder, self.photos, selected, name, self.sides_var.get())
+            sides = self.sides_var.get()
+            assignment = self.session.plan_rename(selected, name, sides)
         except ValueError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self)
             return
@@ -299,14 +273,9 @@ class ReferenceEditor(tk.Toplevel):
             question = "\n".join(assignment.warnings) + "\n\nПродолжить переименование?"
             if not messagebox.askyesno(TITLE, question, parent=self):
                 return
-        renamer.apply_plan(assignment.plan, self.log)
-        done = [item for item in assignment.plan.items if item.result == oplog.RESULT_OK]
-        failed = [item for item in assignment.plan.items if item.result == oplog.RESULT_ERROR]
+        done, failed = self.session.apply_rename(assignment, name, sides)
         if done:
-            self.history.append(done)
             self.undo_btn.configure(state="normal")
-        self.names.remember_sides(name, self.sides_var.get())
-        self.names.save()
         self._apply_renames(done)
         if failed:
             messagebox.showerror(TITLE, "Не удалось переименовать:\n" +
@@ -315,21 +284,15 @@ class ReferenceEditor(tk.Toplevel):
 
     def _apply_renames(self, done) -> None:
         """Обновляет имена в сетке и переставляет ячейки в порядок показа."""
-        mapping = {item.old: item.new for item in done}
-        self.photos = [mapping.get(name, name) for name in self.photos]
-        was = {mapping.get(name, name): index for index, name in enumerate(self.shown)}
-        self.shown = self._display_order()
-        self.grid_widget.reorder([was[name] for name in self.shown], self._items(),
-                                 self._template_flags())
+        order = self.session.apply_renames(done)
+        self.grid_widget.reorder(order, self._items(), self._template_flags())
         self._update_status()
 
     def undo(self) -> None:
-        if not self.history:
+        done = self.session.undo()
+        if done is None:
             return
-        done = self.history.pop()
-        plan = editing.undo_plan(self.folder, done)
-        renamer.apply_plan(plan, self.log)
-        self._apply_renames([item for item in plan.items if item.result == oplog.RESULT_OK])
+        self._apply_renames(done)
         if not self.history:
             self.undo_btn.configure(state="disabled")
 
@@ -339,8 +302,7 @@ class ReferenceEditor(tk.Toplevel):
     def close(self) -> None:
         self.worker.cancel()
         self.worker.wait(5)
-        self.log.close()
-        self.cache.close()
+        self.session.close()
         if self.on_done:
             self.on_done()
         self.destroy()

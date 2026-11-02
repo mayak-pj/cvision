@@ -16,11 +16,9 @@ import threading
 import traceback
 from typing import Callable, Optional
 
+from ..project_session import Cancelled  # noqa: F401 — окна берут Cancelled отсюда
+
 POLL_MS = 30
-
-
-class Cancelled(Exception):
-    """Задача прервана пользователем."""
 
 
 class Worker:
