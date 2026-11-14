@@ -93,14 +93,25 @@ QPushButton:disabled { background: $bg; border-color: $border; color: $text_disa
 QPushButton::menu-indicator { image: url("$img_chevron_down"); width: ${icon_size_sm}px; height: ${icon_size_sm}px;
                               subcontrol-origin: padding; subcontrol-position: right center; right: ${space_sm}px; }
 
-QLineEdit, QTreeView {
+QPushButton[candidate="true"] { text-align: left; padding: 0 ${space_sm}px; }
+
+QLineEdit, QTreeView, QListView, QSpinBox {
     background: $surface; border: 1px solid $border; border-radius: ${radius_sm}px;
     selection-background-color: $accent_soft; selection-color: $text; }
-QLineEdit { min-height: ${button_inner}px; padding: 0 ${space_sm}px; }
-QLineEdit:focus { border-color: $accent; }
-QLineEdit:disabled { background: $bg; }
+QLineEdit, QSpinBox { min-height: ${button_inner}px; padding: 0 ${space_sm}px; }
+QLineEdit:focus, QSpinBox:focus { border-color: $accent; }
+QLineEdit:disabled, QSpinBox:disabled { background: $bg; }
+QSpinBox::up-button, QSpinBox::down-button { width: ${icon_size_sm}px; border: none; background: transparent; }
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: $surface_alt; }
+QSpinBox::up-arrow { image: url("$img_chevron_up"); width: ${space_md}px; height: ${space_md}px; }
+QSpinBox::down-arrow { image: url("$img_chevron_down"); width: ${space_md}px; height: ${space_md}px; }
 
-QTreeView { outline: none; }
+QListView { outline: none; show-decoration-selected: 1; }
+QListView::item { padding: ${space_xs}px; border: none; }
+QListView::item:hover { background: $surface_alt; }
+QListView::item:selected { background: $accent_soft; color: $text; }
+
+QTreeView { outline: none; show-decoration-selected: 1; }
 QTreeView::item { padding: ${space_xs}px 0; }
 QTreeView::item:hover, QTreeView::branch:hover { background: $surface_alt; }
 QTreeView::item:selected, QTreeView::branch:selected { background: $accent_soft; color: $text; }
@@ -224,8 +235,9 @@ def apply(app, name: str, cache_dir: Optional[str] = None) -> Theme:
     folder = cache_dir or os.path.join(tempfile.gettempdir(), "cv_theme")
     try:
         values["img_chevron_down"] = _write_colored("chevron-down", theme.color("text_muted"), folder)
-    except OSError:                      # папка недоступна — оформление остаётся, только без стрелки
-        values["img_chevron_down"] = ""
+        values["img_chevron_up"] = _write_colored("chevron-up", theme.color("text_muted"), folder)
+    except OSError:                      # папка недоступна — оформление остаётся, только без стрелок
+        values["img_chevron_down"] = values["img_chevron_up"] = ""
     app.setStyle("Fusion")
     app.setPalette(theme.palette())
     app.setFont(_app_font())

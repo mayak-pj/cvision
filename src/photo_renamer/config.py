@@ -34,7 +34,7 @@ class AppConfig:
     cache_dir: str = "cache"
     names_file: str = "names.txt"
     theme: str = "light"       # light | dark | system (переключается лампочкой в окне)
-    interface: str = "tk"      # tk — прежние окна, qt — новые на PyQt5 (пока только главное окно)
+    interface: str = "tk"      # tk — прежние окна, qt — новые на PyQt5
     cache_max_mb: float = 2048
     # Файл модели CLIP рядом с программой. Если файла нет или не установлен onnxruntime,
     # программа работает на обычных признаках (см. clipfeat.py).

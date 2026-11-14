@@ -169,3 +169,10 @@ def test_project_session_analysis_rows_and_actions(tmp_path):
 
     session.save_state(str(root))
     assert session.load_state() == {"project": str(root)}
+
+
+def test_review_edits_of_the_last_folder_are_not_undone_in_the_next(review):
+    session, _ = review
+    session.confirm([0])
+    session.queue.append(session.folder)
+    assert session.advance() and session.undo_edit() is None

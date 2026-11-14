@@ -9,10 +9,13 @@ pytest.importorskip("PyQt5.QtWidgets")
 # окно не выводится на экран: так же и не конфликтует с Tk в одном процессе
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
+from PyQt5.QtGui import QMouseEvent  # noqa: E402
+from PyQt5.QtTest import QTest  # noqa: E402
 from PyQt5.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from photo_renamer import config as cfg, launcher  # noqa: E402
-from photo_renamer.gui_qt import app as qt_app, theme as qt_theme  # noqa: E402
+from photo_renamer.gui_qt import app as qt_app, editor as qt_editor, review as qt_review, theme as qt_theme  # noqa: E402
 from photo_renamer.project_session import MARK_NO, MARK_REFERENCE, MARK_YES  # noqa: E402
 from test_grouping import shoot  # noqa: E402
 
@@ -162,10 +165,67 @@ def test_lamp_switches_theme_and_remembers(window, monkeypatch):
     assert window.theme.name == "light" and saved == ["dark", "light"]
 
 
-def test_windows_not_yet_ported_say_so(window):
+def test_reference_button_opens_the_selected_folder(window, project):
+    """Открывается выделенная папка, а не эталон группы; после закрытия имена обновляются."""
+    analyzed(window, project)
+    item = item_of(window, False)
+    item.setSelected(True)
     window.edit_reference()
+    opened = window.findChildren(qt_editor.ReferenceEditor)
+    assert len(opened) == 1 and opened[0].folder == item.folder.path and opened[0].names is window.names
+    opened[0].start()
+    window.lamp.click()
+    assert opened[0].theme is window.theme and opened[0].grid.theme is window.theme
+    refreshed = []
+    opened[0].on_done = lambda: refreshed.append(True)
+    opened[0].close()
+    assert refreshed == [True]
+
+
+def test_reference_button_without_selection_does_nothing(window):
+    window.edit_reference()
+    assert window.findChildren(qt_editor.ReferenceEditor) == [] and window.said == []
+
+
+def test_closing_the_main_window_closes_the_editor(window, project):
+    analyzed(window, project)
+    item_of(window, False).setSelected(True)
+    window.edit_reference()
+    opened = window.findChildren(qt_editor.ReferenceEditor)[0]
+    assert window.close() and opened._closed
+
+
+def test_rename_button_opens_the_window_and_refreshes_after_it(window, project):
+    analyzed(window, project)
+    item_of(window, False).setSelected(True)
     window.rename_group()
-    assert len(window.said) == 2 and all("--tk" in text for text in window.said)
+    opened = window.findChildren(qt_review.BatchWindow)
+    assert len(opened) == 1 and opened[0].session.names is window.names
+    refreshed = []
+    window.refresh = lambda: refreshed.append(True)
+    opened[0].on_done = window.refresh
+    opened[0].close()
+    assert refreshed == [True]
+
+
+def test_lamp_repaints_the_open_rename_window(window, project):
+    analyzed(window, project)
+    item_of(window, False).setSelected(True)
+    window.rename_group()
+    opened = window.findChildren(qt_review.BatchWindow)[0]
+    window.lamp.click()
+    assert opened.theme is window.theme
+    opened.on_done = None
+    opened.close()
+
+
+def test_closing_the_program_closes_the_rename_window(window, project):
+    analyzed(window, project)
+    item_of(window, False).setSelected(True)
+    window.rename_group()
+    opened = window.findChildren(qt_review.BatchWindow)[0]
+    window.show()
+    assert window.close() and opened._closed
 
 
 def test_themes_have_the_same_tokens():
@@ -173,7 +233,8 @@ def test_themes_have_the_same_tokens():
 
 
 def test_every_icon_is_drawn(window):
-    for name in ("folder-open", "search", "square", "lightbulb", "lightbulb-off", "refresh-cw"):
+    for name in ("folder-open", "search", "square", "lightbulb", "lightbulb-off", "refresh-cw", "plus", "minus",
+                 "trash-2"):
         assert not window.theme.icon(name).isNull()
 
 
@@ -204,3 +265,47 @@ def test_launcher_opens_qt_when_asked(monkeypatch):
     monkeypatch.setattr(launcher, "load_qt", lambda: Qt)
     launcher.main("qt")
     assert opened == ["qt"]
+
+
+def click_position(window, item, column):
+    rect = window.tree.visualItemRect(item)
+    header = window.tree.header()
+    x = header.sectionViewportPosition(column) + header.sectionSize(column) // 2    # не по стрелке ветки
+    return QPoint(x, rect.center().y())
+
+
+def test_real_click_on_marks(window, project):
+    """Настоящими щелчками: таблица перестраивается прямо в обработчике щелчка, и окно не падает."""
+    analyzed(window, project)
+    window.show()
+    was = item_of(window, False).text(qt_app.COLUMN_RENAME)
+    point = click_position(window, item_of(window, False), qt_app.COLUMN_RENAME)
+    QTest.mouseClick(window.tree.viewport(), Qt.LeftButton, Qt.NoModifier, point)
+    assert item_of(window, False).text(qt_app.COLUMN_RENAME) != was
+    QTest.mouseClick(window.tree.viewport(), Qt.LeftButton, Qt.NoModifier, point)
+    assert item_of(window, False).text(qt_app.COLUMN_RENAME) == was
+
+
+def double_click(viewport, point):
+    """Как на самом деле: нажатие, отпускание, двойное нажатие, отпускание."""
+    QTest.mousePress(viewport, Qt.LeftButton, Qt.NoModifier, point)
+    QTest.mouseRelease(viewport, Qt.LeftButton, Qt.NoModifier, point)
+    event = QMouseEvent(QEvent.MouseButtonDblClick, QPointF(point), QPointF(viewport.mapToGlobal(point)),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    QApplication.sendEvent(viewport, event)
+    QTest.mouseRelease(viewport, Qt.LeftButton, Qt.NoModifier, point)
+
+
+def test_double_click_on_mark_toggles_once_and_opens_nothing(window, project, monkeypatch):
+    """Как в окне на tkinter: второй щелчок двойного не дёргает отметку, а столбцы отметок не открывают папку."""
+    opened = []
+    monkeypatch.setattr(qt_app, "open_in_file_manager", opened.append)
+    analyzed(window, project)
+    window.show()
+    was = item_of(window, False).text(qt_app.COLUMN_RENAME)
+    viewport = window.tree.viewport()
+    double_click(viewport, click_position(window, item_of(window, False), qt_app.COLUMN_RENAME))
+    assert item_of(window, False).text(qt_app.COLUMN_RENAME) != was
+    assert opened == []
+    double_click(viewport, click_position(window, item_of(window, False), 0))
+    assert opened == [item_of(window, False).folder.path]

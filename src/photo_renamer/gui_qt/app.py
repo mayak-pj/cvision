@@ -9,16 +9,19 @@ import sys
 import traceback
 from typing import List, Optional
 
-from PyQt5.QtCore import QSize, Qt, QTimer
+from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtWidgets import (QAbstractItemView, QAction, QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
                              QSizePolicy, QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .. import config as cfg
 from ..cache import PhotoCache
+from ..names import NamesList
 from ..project_session import MARK_NO, MARK_REFERENCE, ProjectSession
 from ..worker import Cancelled, Worker
-from . import theme as theme_mod
+from . import common, theme as theme_mod
+from .editor import ReferenceEditor
+from .review import BatchWindow
 
 TITLE = "CV"
 COLUMNS = ("Группа / папка", "Эталон", "Переименовать", "Фото", "Обработано", "Сходство")
@@ -29,7 +32,6 @@ HINT = ("Программа находит все папки с фото, сра
         "Для каждой группы нужен один эталон — папка, переименованная по шаблону. "
         "Галочка «Эталон» стоит на самой переименованной папке группы; её можно "
         "переставить щелчком, как и отметку «Переименовать».")
-NOT_PORTED = "Это окно ещё не перенесено на новое оформление.\nПока откройте его в прежнем интерфейсе: run.py --tk"
 
 
 def open_in_file_manager(path: str) -> None:
@@ -41,18 +43,6 @@ def open_in_file_manager(path: str) -> None:
         subprocess.Popen(["xdg-open", path])
 
 
-class _WorkerHost:
-    """То, что фоновой задаче нужно от окна: отложенный вызов и обработка событий."""
-
-    @staticmethod
-    def after(milliseconds: int, function, *args) -> None:
-        QTimer.singleShot(milliseconds, lambda: function(*args))
-
-    @staticmethod
-    def update() -> None:
-        QApplication.processEvents()
-
-
 class _RowItem(QTreeWidgetItem):
     """Строка таблицы вместе с тем, к какой группе и папке она относится."""
 
@@ -62,14 +52,29 @@ class _RowItem(QTreeWidgetItem):
         self.folder = row.folder
 
 
+class _ProjectTree(QTreeWidget):
+    """Таблица папок. Первый щелчок двойного уже переставил отметку и перестроил таблицу: без этой
+    проверки Qt принял бы второй за новый щелчок, и отметка вернулась бы обратно."""
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        item = self.itemAt(event.pos())
+        if item is not None and item.folder is not None and self.columnAt(event.x()) in (COLUMN_REFERENCE,
+                                                                                         COLUMN_RENAME):
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, app_config: cfg.AppConfig, config_warnings: List[str] = ()):
         super().__init__()
         self.app_config = app_config
         self.session = ProjectSession(app_config)
+        # список категорий один на все окна: иначе у каждого своя копия, и сохранение затирает чужое
+        self.names = NamesList(app_config.names_path())
         self._busy = False
         self._close_requested = False
-        self.worker = Worker(_WorkerHost())
+        self.worker = Worker(common.WorkerHost())
         self.theme = self._apply_theme(theme_mod.resolve(app_config.theme, QApplication.instance()))
 
         self.setWindowTitle(TITLE)
@@ -129,7 +134,7 @@ class MainWindow(QMainWindow):
         middle = QHBoxLayout()
         middle.setSpacing(space["md"])
         layout.addLayout(middle, 1)
-        self.tree = QTreeWidget()
+        self.tree = _ProjectTree()
         self.tree.setColumnCount(len(COLUMNS))
         self.tree.setHeaderLabels(COLUMNS)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -168,12 +173,12 @@ class MainWindow(QMainWindow):
         self.move_menu.aboutToShow.connect(self._fill_move_menu)
         self.move_btn.setMenu(self.move_menu)
         self.open_btn = self._button(panel, "Открыть папку", self.open_folder)
-        panel.addWidget(self._line())
+        panel.addWidget(common.line())
         panel.addWidget(self._section("Группа"))
         self.edit_reference_btn = self._button(panel, "Создать / изменить эталон…", self.edit_reference)
         self.rename_group_btn = self._button(panel, "Переименовать папки группы…", self.rename_group)
         self.rename_group_btn.setProperty("accent", True)
-        panel.addWidget(self._line())
+        panel.addWidget(common.line())
         self.refresh_btn = self._button(panel, "Обновить имена файлов", self.refresh)
         panel.addStretch(1)
 
@@ -196,13 +201,6 @@ class MainWindow(QMainWindow):
         label = QLabel(text)
         label.setProperty("role", "title")
         return label
-
-    @staticmethod
-    def _line() -> QFrame:
-        line = QFrame()
-        line.setObjectName("line")
-        line.setFixedHeight(1)
-        return line
 
     @staticmethod
     def _button(panel: QVBoxLayout, text: str, slot) -> QPushButton:
@@ -237,6 +235,8 @@ class MainWindow(QMainWindow):
         self.theme = self._apply_theme(mode)
         self._set_icons()
         self.render()
+        for window in self._child_windows():
+            window.set_theme(self.theme)
         try:
             cfg.save_config(self.app_config)
         except OSError as exc:
@@ -427,10 +427,27 @@ class MainWindow(QMainWindow):
         self.status_label.setText(self.session.summary())
 
     def edit_reference(self) -> None:
-        QMessageBox.information(self, TITLE, NOT_PORTED)
+        """Открывает выделенную папку, а не эталон группы: человек выбрал её сам."""
+        group = self._selected_group()
+        if group is None:
+            return
+        folder = self._selected_folder() or self.analysis.groups[group].reference
+        window = ReferenceEditor(self, folder.path, self.app_config, self.theme, self.names, on_done=self.refresh)
+        window.show()
 
     def rename_group(self) -> None:
-        QMessageBox.information(self, TITLE, NOT_PORTED)
+        group = self._selected_group()
+        if group is None:
+            return
+        target = self.analysis.groups[group]
+        if not target.targets:
+            QMessageBox.information(self, TITLE, "В этой группе нет папок для переименования.")
+            return
+        window = BatchWindow(self, target, self.app_config, self.theme, on_done=self.refresh, names=self.names)
+        window.show()
+
+    def _child_windows(self) -> list:
+        return self.findChildren(BatchWindow) + self.findChildren(ReferenceEditor)
 
     def closeEvent(self, event) -> None:
         if self._busy or self.worker.busy():
@@ -438,6 +455,12 @@ class MainWindow(QMainWindow):
             self.worker.cancel()
             event.ignore()
             return
+        # дочернее окно закрывается как обычно: иначе его лог и кэш остались бы незакрытыми
+        for window in self._child_windows():
+            window.on_done = None
+            if not window.close():      # оно ещё читает фото и закроется само, когда прервётся
+                event.ignore()
+                return
         event.accept()
 
     def wait_for_worker(self, timeout: float = 600.0) -> None:

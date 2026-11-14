@@ -127,6 +127,9 @@ class ReviewSession:
             return False
         self.folder = self.queue.pop(0)
         self.done_folders += 1
+        # правки прошлой папки здесь не отменяются: номера фото в новой папке значат другое,
+        # и Ctrl+Z подставил бы категорию чужого фото
+        self._undo.clear()
         return True
 
     def header_text(self) -> str:
