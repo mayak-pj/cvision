@@ -28,6 +28,8 @@ _app = QApplication.instance() or QApplication([sys.argv[0]])
 
 def make_config(tmp_path):
     config = cfg.AppConfig()
+    # без CLIP (его в тестах нет) искусственные снимки одной комплектации отстоят на ~0.45
+    config.group_threshold = 0.6
     config.cache_dir = str(tmp_path / "cache")
     config.logs_dir = str(tmp_path / "logs")
     config.names_file = str(tmp_path / "names.txt")
@@ -442,9 +444,10 @@ def test_double_click_opens_the_photo_large(batch, monkeypatch):
 
 def test_long_path_does_not_widen_the_window(batch):
     win, _ = batch
+    before = max(win.minimumSizeHint().width(), win.minimumWidth())   # ширина кнопок зависит от шрифта
     win.header_label.set_full_text("Папка: " + "/очень длинный путь" * 40)
     win.status_label.setText("Лог: " + "/очень_длинный_путь" * 40)
-    assert win.minimumSizeHint().width() <= win.minimumWidth()
+    assert win.minimumSizeHint().width() <= before
 
 
 def test_next_folder_shows_new_thumbnails_not_old_ones(tmp_path, dialogs):

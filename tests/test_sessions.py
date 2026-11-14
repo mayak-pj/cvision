@@ -22,6 +22,8 @@ PARTS = [1, 2, 3, 4, 5, 6]
 
 def app_config(tmp_path):
     config = cfg.AppConfig()
+    # без CLIP (его в тестах нет) искусственные снимки одной комплектации отстоят на ~0.45
+    config.group_threshold = 0.6
     config.cache_dir = str(tmp_path / "cache")
     config.logs_dir = str(tmp_path / "logs")
     config.names_file = str(tmp_path / "names.txt")

@@ -34,6 +34,8 @@ def window(tmp_path, monkeypatch):
         monkeypatch.setattr(QMessageBox, name, lambda parent, title, text: said.append(text))
     monkeypatch.setattr(cfg, "save_config", lambda *a, **k: None)
     config = cfg.AppConfig()
+    # без CLIP (его в тестах нет) искусственные снимки одной комплектации отстоят на ~0.45
+    config.group_threshold = 0.6
     config.cache_dir = str(tmp_path / "cache")
     config.logs_dir = str(tmp_path / "logs")
     config.names_file = str(tmp_path / "names.txt")

@@ -309,6 +309,7 @@ class ReferenceEditor(QMainWindow):
         if assignment.warnings:
             if not self._ask("\n".join(assignment.warnings) + "\n\nПродолжить переименование?"):
                 return
+        self.grid.pause_loading()          # читаемое сейчас фото на Windows не переименовать
         done, failed = self.session.apply_rename(assignment, name, sides)
         if done:
             self.undo_btn.setEnabled(True)
@@ -325,6 +326,9 @@ class ReferenceEditor(QMainWindow):
         self._update_status()
 
     def undo(self) -> None:
+        if not self.session.history:
+            return
+        self.grid.pause_loading()
         done = self.session.undo()
         if done is None:
             return

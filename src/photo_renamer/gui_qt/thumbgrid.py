@@ -332,6 +332,15 @@ class ThumbnailGrid(QListView):
             self.viewport().update()
             self._report()
 
+    def pause_loading(self, timeout: float = 30.0) -> None:
+        """Дождаться, пока задача дочитает текущее фото, и остановить её. Продолжит _start_loading
+        (его зовут set_items и reorder). Нужно перед переименованием: на Windows файл, который
+        в это время читается, переименовать нельзя — «файл открыт в другой программе»."""
+        if self.worker.busy():
+            self._restart = False
+            self.worker.cancel()
+            self.worker.wait(timeout)
+
     def stop(self) -> None:
         """Перед закрытием окна: сообщения задачи больше не принимаются, её кэш она закроет сама."""
         self._stopped = True

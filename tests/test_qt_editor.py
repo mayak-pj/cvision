@@ -33,6 +33,8 @@ def dialogs(monkeypatch):
 
 def open_editor(tmp_path, folder, names=None):
     config = cfg.AppConfig()
+    # без CLIP (его в тестах нет) искусственные снимки одной комплектации отстоят на ~0.45
+    config.group_threshold = 0.6
     config.cache_dir = str(tmp_path / "cache")
     config.logs_dir = str(tmp_path / "logs")
     if names is None:
@@ -289,7 +291,10 @@ def test_selection_buttons_and_counter(editor):
 
 
 def click_cell(grid, row, modifier=Qt.NoModifier):
-    QTest.mouseClick(grid.viewport(), Qt.LeftButton, modifier, grid.visualRect(grid.model_.index(row)).center())
+    """Щелчок как рукой: ячейка сначала прокручивается в окно (при крупном шрифте сетка не помещается)."""
+    index = grid.model_.index(row)
+    grid.scrollTo(index)
+    QTest.mouseClick(grid.viewport(), Qt.LeftButton, modifier, grid.visualRect(index).center())
 
 
 def test_clicks_select_like_in_explorer(editor):
@@ -423,7 +428,7 @@ def test_rename_during_loading_still_shows_every_thumbnail(editor):
     pick_name(win, "Кулер")
     win.grid.set_selection([0, 1])
     win.rename_selected()
-    assert win.grid._restart
+    assert win.worker.busy()          # загрузка встала на время переименования и пошла по новым именам
     wait_for_thumbnails(win)
     assert not win.grid._restart
     assert all(cell.image for cell in win.grid.cells)
@@ -537,7 +542,8 @@ def test_label_keeps_the_end_of_a_long_name():
     font = QFont()
     metrics = QFontMetrics(font)
     assert thumbgrid.label_lines("Кулер.JPG", metrics, font, 160) == "Кулер.JPG"
-    lines = thumbgrid.label_lines("Плата оперативной памяти и ещё много других слов 12 фото 3.JPG", metrics, font, 120)
+    width = metrics.horizontalAdvance("Плата оперативной памяти")    # ширина ячейки — по шрифту, а не в точках
+    lines = thumbgrid.label_lines("Плата оперативной памяти и ещё много других слов 12 фото 3.JPG", metrics, font, width)
     assert len(lines.split("\n")) == 2 and lines.endswith("3.JPG")
 
 
@@ -556,3 +562,43 @@ def test_grid_has_focus_when_the_window_opens(tmp_path, dialogs):
     assert win.focusWidget() is win.grid
     win.close()
     win.deleteLater()
+
+
+def test_rename_waits_for_the_photo_being_read(tmp_path, dialogs, monkeypatch):
+    """На Windows фото, которое в этот миг читает загрузка миниатюр, переименовать нельзя («файл открыт
+    в другой программе»): так в Actions не переименовывалось первое фото. Загрузка встаёт на время
+    переименования и потом дочитывает остальное."""
+    from photo_renamer.cache import PhotoCache
+
+    folder = tmp_path / "SN1"
+    shoot(folder, [1, 2, 3, 4, 5, 6])
+    reading = []
+    original = PhotoCache.thumbnail
+
+    def slow(self, path):
+        reading.append(path)
+        time.sleep(0.15)                      # фото с сетевого диска читается долго
+        try:
+            return original(self, path)
+        finally:
+            reading.remove(path)
+
+    monkeypatch.setattr(PhotoCache, "thumbnail", slow)
+    win, _ = open_editor(tmp_path, folder)
+    win.start()
+    assert win.worker.busy()
+    seen = []
+    apply = win.session.apply_rename
+    monkeypatch.setattr(win.session, "apply_rename", lambda *a: (seen.append(list(reading)), apply(*a))[1])
+    undo = win.session.undo
+    monkeypatch.setattr(win.session, "undo", lambda: (seen.append(list(reading)), undo())[1])
+    win.grid.set_selection([0])
+    pick_name(win, "Кулер")
+    win.rename_selected()
+    assert "Кулер.JPG" in os.listdir(str(folder))
+    win.undo()
+    assert "Кулер.JPG" not in os.listdir(str(folder))
+    assert seen == [[], []]                   # в миг переименования и отмены ничего не читалось
+    wait_for_thumbnails(win)
+    assert win.grid.loaded_count() == 6       # остальное дочитано
+    win.close()
