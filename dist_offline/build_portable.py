@@ -3,12 +3,12 @@
 Собирает папку, которую достаточно скопировать на рабочий компьютер:
 
     CV\\
-        python\\                 embeddable Python 3.8.10 + библиотеки + файлы tkinter
+        python\\                 embeddable Python 3.8.10 + библиотеки (с PyQt5) + файлы tkinter
         model\\                  модель CLIP (если указана --model)
         src\\photo_renamer\\      код программы
         run.py
         config.example.json, names.example.txt
-        CV.bat  ярлык запуска
+        CV.bat  ярлык запуска; «CV (новые окна).bat» — окна на PyQt5
         Инструкция.txt
 
 Почему так:
@@ -53,10 +53,19 @@ TK_FILES = [
     ("DLLs/zlib1.dll", "DLLs/zlib1.dll", False),
 ]
 TK_DIRS = [("Lib/tkinter", "Lib/tkinter"), ("tcl", "tcl")]
+# Без этих файлов новые окна (PyQt5) не откроются: оконный модуль Qt для Windows и основные библиотеки.
+QT_FILES = ["PyQt5/QtWidgets.pyd", "PyQt5/Qt5/bin/Qt5Core.dll", "PyQt5/Qt5/bin/Qt5Widgets.dll",
+            "PyQt5/Qt5/bin/Qt5Svg.dll", "PyQt5/Qt5/plugins/platforms/qwindows.dll",
+            "PyQt5/Qt5/plugins/imageformats/qsvg.dll"]
 LAUNCHER = """@echo off
 rem Запуск программы. Консоль не нужна: pythonw.exe открывает окно без чёрного окна консоли.
 set HERE=%~dp0
 start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" %*
+"""
+QT_LAUNCHER = """@echo off
+rem Новые окна (PyQt5) на этот запуск, настройка interface не меняется.
+set HERE=%~dp0
+start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" --qt
 """
 CHECK_LAUNCHER = """@echo off
 rem Проверка сборки. Запускать нужно именно встроенным Python: в чужом нет ни библиотек, ни tkinter.
@@ -115,17 +124,29 @@ def wheel_list(wheels: Path):
     return sorted(wheels.glob("*.whl"))
 
 
+def wheel_fits(name: str) -> bool:
+    """Годится ли колесо для Python 3.8 / 64-битной Windows. Имя: пакет-версия-python-abi-платформа.whl.
+
+    Подходят: cp38; «abi3» от более ранней версии (PyQt5 — cp37-abi3, работает на любом Python 3.7+);
+    py3 / py2.py3 — без кода для своей версии Python. Платформа: win_amd64 или any.
+    """
+    parts = name.lower()[:-4].split("-")
+    if len(parts) < 5:
+        return False
+    python, abi, platform = parts[-3], parts[-2], parts[-1]
+    if platform not in ("win_amd64", "any"):
+        return False
+    tags = python.split(".")
+    if "cp38" in tags or "py3" in tags:
+        return True
+    if abi == "abi3":
+        return any(t.startswith("cp3") and t[3:].isdigit() and int(t[3:]) <= 8 for t in tags)
+    return False
+
+
 def wrong_platform_wheels(wheels: Path):
     """Колёса не для Python 3.8 / 64-битной Windows: на рабочей машине не заработают."""
-    bad = []
-    for wheel in wheel_list(wheels):
-        name = wheel.name.lower()
-        pure = "-py3-none-any.whl" in name or "-py2.py3-none-any.whl" in name
-        if pure:
-            continue
-        if "cp38" not in name or "win_amd64" not in name:
-            bad.append(wheel.name)
-    return bad
+    return [wheel.name for wheel in wheel_list(wheels) if not wheel_fits(wheel.name)]
 
 
 def plan(embed: Path, wheels: Path, tk_from: Path, out: Path, model: Path = None):
@@ -139,6 +160,9 @@ def plan(embed: Path, wheels: Path, tk_from: Path, out: Path, model: Path = None
         optional = [name for name, _, required in TK_FILES if not required and not (tk_from / name).is_file()]
         if optional:
             lines.append("    необязательных файлов нет (обычно не мешает): " + ", ".join(optional))
+    has_qt = any(w.name.lower().startswith("pyqt5_qt5-") or w.name.lower().startswith("pyqt5-qt5-")
+                 for w in wheel_list(wheels))
+    lines.append("Новые окна (PyQt5): %s" % ("есть" if has_qt else "НЕТ колеса PyQt5-Qt5 (будут только прежние окна)"))
     lines.append("Код программы: " + ", ".join(PROJECT_DIRS + PROJECT_FILES))
     lines.append("Модель CLIP: %s" % (model if model else "НЕ КОПИРУЕТСЯ (программа будет работать слабее)"))
     bad = wrong_platform_wheels(wheels)
@@ -205,6 +229,17 @@ def verify_tkinter(python_dir: Path) -> None:
         raise BuildError("В собранном Python не хватает файлов tkinter: %s" % ", ".join(missing))
 
 
+def verify_qt(site_packages: Path) -> str:
+    """PyQt5 в сборке и все ли файлы на месте. Без PyQt5 работают только прежние окна."""
+    if not (site_packages / "PyQt5").is_dir():
+        return "НЕТ (работают только прежние окна; скачайте библиотеки заново: download_wheels.py)"
+    missing = [name for name in QT_FILES if not (site_packages / name).is_file()]
+    if missing:
+        raise BuildError("В PyQt5 не хватает файлов: %s. Нужны колёса PyQt5, PyQt5-Qt5 и PyQt5-sip "
+                         "для win_amd64" % ", ".join(missing))
+    return "есть"
+
+
 def copy_model(model: Path, out: Path) -> str:
     """Кладёт модель CLIP рядом с программой. Без неё программа работает на обычных признаках."""
     source = model / MODEL_FILE if model.is_dir() else model
@@ -265,6 +300,7 @@ def copy_project(project: Path, out: Path) -> None:
 
 def write_launchers(out: Path) -> None:
     (out / "CV.bat").write_text(LAUNCHER, encoding="cp866")
+    (out / "CV (новые окна).bat").write_text(QT_LAUNCHER, encoding="cp866")
     (out / "Запуск с консолью (для ошибок).bat").write_text(CONSOLE_LAUNCHER, encoding="cp866")
     # отдельный ярлык для проверки: иначе её запускают чужим Python и получают «No module named numpy»
     (out / "Проверка сборки.bat").write_text(CHECK_LAUNCHER, encoding="cp866")
@@ -287,8 +323,8 @@ def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path,
     extracted = extract_wheels(wheels, python_dir / "Lib" / "site-packages")
     if tk_from is not None:
         copy_tkinter(tk_from, python_dir)
-    if tk_from is not None:
         verify_tkinter(python_dir)
+    print("Новые окна (PyQt5): " + verify_qt(python_dir / "Lib" / "site-packages"))
     copied, missing = install_vcruntime(python_dir, python_dir / "Lib" / "site-packages", vcruntime)
     print("Библиотеки Visual C++: %s" % (", ".join("%s (%s)" % (n, how) for n, how in sorted(copied.items()))
                                          or "не найдено ничего"))

@@ -9,7 +9,7 @@ import sys
 import traceback
 from typing import List, Optional
 
-from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtCore import QCoreApplication, QLibraryInfo, QLocale, QSize, Qt, QTranslator
 from PyQt5.QtWidgets import (QAbstractItemView, QAction, QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
                              QSizePolicy, QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
@@ -474,11 +474,39 @@ def _show_error(kind, error, trace) -> None:
     QMessageBox.critical(None, TITLE, "Ошибка программы:\n%s" % error)
 
 
+def qt_plugins_dir() -> str:
+    """Папка модулей Qt внутри пакета PyQt5 (пустая строка, если её нет)."""
+    import PyQt5
+
+    folder = os.path.join(os.path.dirname(os.path.abspath(PyQt5.__file__)), "Qt5", "plugins")
+    return folder if os.path.isdir(os.path.join(folder, "platforms")) else ""
+
+
+def create_application() -> QApplication:
+    """QApplication, который запускается и из папки с русскими буквами.
+
+    PyQt5 сообщает Qt путь к модулям не в Юникоде, и из такой папки Qt их не находит: процесс
+    обрывается с «no Qt platform plugin could be initialized» (так было у Digger на Windows 7).
+    Поэтому путь задаётся явно, до создания приложения.
+    """
+    app = QApplication.instance()
+    if app is not None:
+        return app
+    plugins = qt_plugins_dir()
+    if plugins:
+        QCoreApplication.addLibraryPath(plugins)
+    app = QApplication(sys.argv[:1])
+    translator = QTranslator(app)       # русские подписи стандартных окон Qt
+    if translator.load(QLocale("ru_RU"), "qtbase", "_", QLibraryInfo.location(QLibraryInfo.TranslationsPath)):
+        app.installTranslator(translator)
+    return app
+
+
 def main(config: Optional[cfg.AppConfig] = None, warnings: List[str] = ()) -> None:
     if config is None:
         config, warnings = cfg.load_config()
     sys.excepthook = _show_error
-    app = QApplication.instance() or QApplication(sys.argv[:1])
+    app = create_application()
     window = MainWindow(config, warnings)
     window.show()
     app.exec_()

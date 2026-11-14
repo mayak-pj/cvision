@@ -10,5 +10,11 @@ scipy==1.10.1
 # Для разработки годится любая версия из диапазона; для Windows 7 сборщик берёт ровно 1.11.1
 # (см. dist_offline/download_wheels.py --onnxruntime).
 onnxruntime>=1.11,<1.17
+# Окна на PyQt5 (настройка interface или run.py --qt). Версии те же, что в Digger: они проверены
+# на Windows 7. Qt 5.15.2 — последний выпуск с колесом для Windows; на Mac колёс 5.15.2 для arm64 нет.
+PyQt5==5.15.10
+PyQt5-Qt5==5.15.2; sys_platform != "darwin"
+PyQt5-Qt5==5.15.19; sys_platform == "darwin"
+PyQt5-sip==12.13.0
 # tkinter входит в стандартную библиотеку (для embeddable Python добавляется вручную, см. docs/)
 # imagehash НЕ используется: pHash реализован в проекте (см. docs/decisions.md)

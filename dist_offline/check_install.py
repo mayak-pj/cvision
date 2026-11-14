@@ -3,13 +3,18 @@
     python\\python.exe check_install.py
 
 Проверяет то, что обычно ломается на рабочей машине без интернета и без прав администратора:
-версию Windows и Python, наличие библиотек, работу окна (tkinter), чтение JPEG, запись в logs
-и cache, работу модели CLIP (onnxruntime) с замером скорости, а также сам алгоритм
+версию Windows и Python, наличие библиотек, работу окна (tkinter), новые окна (PyQt5), чтение JPEG,
+запись в logs и cache, работу модели CLIP (onnxruntime) с замером скорости, а также сам алгоритм
 на маленьком проверочном изображении.
+
+Новые окна проверяются отдельным процессом (check_install.py --qt-probe): если Qt не найдёт свои
+модули, он обрывает процесс без сообщения, и иначе оборвалась бы вся проверка. Проба идёт на
+настоящем оконном модуле Windows: offscreen на Windows 7 у соседнего проекта сам обрушивал проверку.
 """
 
 import os
 import platform
+import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -91,6 +96,80 @@ def window():
     theme.apply(root, "light")
     root.destroy()
     return "Tk %s, светлое оформление применяется" % version
+
+
+QT_TIMEOUT = 90          # первое окно на медленной машине открывается долго
+QT_DEBUG = {"QT_DEBUG_PLUGINS": "1", "QT_FORCE_STDERR_LOGGING": "1", "QT_LOGGING_TO_CONSOLE": "1"}
+
+
+def qt_probe() -> int:
+    """Главное окно на PyQt5 в этом процессе: открыть, нарисовать, закрыть. Код 0 — всё вышло."""
+    from PyQt5.QtCore import QT_VERSION_STR, QTimer
+    from PyQt5.QtGui import QImageReader
+
+    from photo_renamer import config as cfg
+    from photo_renamer.gui_qt import app as qt_app
+
+    app = qt_app.create_application()
+    config, _ = cfg.load_config()
+    window = qt_app.MainWindow(config, [])
+    window.show()
+    result = {}
+
+    def look():
+        image = window.grab().toImage()
+        result["size"] = (image.width(), image.height())
+        result["colors"] = len({image.pixel(x, y) for x in range(0, image.width(), 7)
+                                for y in range(0, image.height(), 7)})
+        window.close()
+        app.quit()
+
+    QTimer.singleShot(500, look)
+    app.exec_()
+    formats = {bytes(f).decode() for f in QImageReader.supportedImageFormats()}
+    print("Qt %s, модуль экрана %s, окно %dx%d, цветов %d, svg %s" % (
+        QT_VERSION_STR, app.platformName(), result.get("size", (0, 0))[0], result.get("size", (0, 0))[1],
+        result.get("colors", 0), "есть" if "svg" in formats else "НЕТ"))
+    sys.stdout.flush()
+    if result.get("colors", 0) < 3:
+        print("окно не нарисовалось")
+        return 2
+    if "svg" not in formats:
+        print("нет модуля svg: значки на кнопках не покажутся")
+        return 3
+    return 0
+
+
+def qt_window():
+    try:
+        import PyQt5  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError("PyQt5 не найден (%s): работают только прежние окна" % exc)
+    command = [sys.executable, str(HERE / "check_install.py"), "--qt-probe"]
+    env = dict(os.environ)
+    env.pop("QT_QPA_PLATFORM", None)         # настоящий оконный модуль, не offscreen
+    try:
+        done = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                              timeout=QT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("окно не закрылось за %d с (возможно, Qt показал сообщение об ошибке)" % QT_TIMEOUT)
+    out = done.stdout.decode("utf-8", "replace").strip()
+    if done.returncode == 0:
+        return out.splitlines()[-1] if out else "окно открылось"
+    # причина: тот же запуск с подробным выводом Qt о поиске модулей — в файл рядом с логами
+    report = HERE / "logs" / "проверка_qt.txt"
+    try:
+        env.update(QT_DEBUG)
+        again = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                               timeout=QT_TIMEOUT)
+        report.parent.mkdir(exist_ok=True)
+        report.write_bytes(again.stdout)
+        where = "; подробности — %s" % report
+    except Exception as exc:                 # noqa — проверка не должна падать из-за отчёта
+        where = "; подробности собрать не удалось: %s" % exc
+    tail = (out + "\n" + done.stderr.decode("utf-8", "replace")).strip().splitlines()[-3:]
+    raise RuntimeError("новые окна не запускаются (код %s): %s%s. Прежние окна работают — CV.bat"
+                       % (done.returncode, " | ".join(tail) or "без сообщения", where))
 
 
 def jpeg_and_features():
@@ -186,6 +265,7 @@ def main():
     check("Python", python_version)
     check("Библиотеки", libraries)
     check("Окно (tkinter)", window)
+    check("Новые окна (PyQt5)", qt_window)
     check("Чтение JPEG и признаки", jpeg_and_features)
     check("Модель CLIP", clip_model)
     check("Папки logs и cache", folders)
@@ -204,4 +284,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(qt_probe() if sys.argv[1:] == ["--qt-probe"] else main())

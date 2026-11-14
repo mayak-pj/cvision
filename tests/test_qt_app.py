@@ -309,3 +309,10 @@ def test_double_click_on_mark_toggles_once_and_opens_nothing(window, project, mo
     assert opened == []
     double_click(viewport, click_position(window, item_of(window, False), 0))
     assert opened == [item_of(window, False).folder.path]
+
+
+def test_qt_plugins_folder_is_found_for_explicit_path():
+    """Путь к модулям Qt задаётся явно: из папки с русскими буквами Qt сам их не находит."""
+    folder = qt_app.qt_plugins_dir()
+    assert folder and os.path.isdir(os.path.join(folder, "platforms"))
+    assert qt_app.create_application() is QApplication.instance()     # второй раз не создаётся
