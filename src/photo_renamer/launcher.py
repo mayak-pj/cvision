@@ -20,6 +20,7 @@ def load_qt():
 def main(interface: Optional[str] = None) -> None:
     """interface — выбор на этот запуск; None — как в настройках."""
     config, warnings = cfg.load_config()
+    config.ensure_names_file()
     if (interface or config.interface) == "qt":
         qt = load_qt()
         if qt is not None:

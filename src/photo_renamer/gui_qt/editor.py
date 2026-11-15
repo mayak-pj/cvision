@@ -35,6 +35,7 @@ class ReferenceEditor(QMainWindow):
         self.worker = Worker(common.WorkerHost())
         self._started = False
         self._closed = False
+        self._view: Optional[LargeView] = None     # открытое крупно фото: переименовывается оно
 
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle("%s: %s" % (TITLE, folder))
@@ -83,12 +84,7 @@ class ReferenceEditor(QMainWindow):
         self.selection_label = QLabel("Выделено: 0")
         self.selection_label.setProperty("role", "title")
         top.addWidget(self.selection_label)
-        self.select_all_btn = QPushButton("Выделить всё")
-        self.select_all_btn.clicked.connect(lambda: self.grid.select_all())
-        top.addWidget(self.select_all_btn)
-        self.clear_btn = QPushButton("Снять выделение")
-        self.clear_btn.clicked.connect(lambda: self.grid.clear_selection())
-        top.addWidget(self.clear_btn)
+        # кнопок «Выделить всё» и «Снять выделение» нет: по отзыву с работы не нужны (Ctrl+A и Esc есть)
         top.addStretch(1)
         top.addWidget(QLabel("Размер миниатюр:"))
         self.smaller_btn = QToolButton()
@@ -318,12 +314,15 @@ class ReferenceEditor(QMainWindow):
             QMessageBox.critical(self, TITLE, "Не удалось переименовать:\n" +
                                  "\n".join("%s: %s" % (item.old, item.message) for item in failed))
         self.grid.clear_selection()
+        self._follow_view()
 
     def _apply_renames(self, done) -> None:
         """Обновляет имена в сетке и переставляет ячейки в порядок показа."""
         order = self.session.apply_renames(done)
         self.grid.reorder(order, self.session.items(), self.session.template_flags())
         self._update_status()
+        if self._view is not None:
+            self._view.set_photos(self.session.shown, {item.old: item.new for item in done})
 
     def undo(self) -> None:
         if not self.session.history:
@@ -335,9 +334,30 @@ class ReferenceEditor(QMainWindow):
         self._apply_renames(done)
         if not self.session.history:
             self.undo_btn.setEnabled(False)
+        self._follow_view()
 
     def _open_large(self, index: int) -> None:
-        LargeView(self, self.folder, self.session.shown, index)   # листается как показано
+        """Фото крупно. Листается как показано в сетке; открытое фото и есть выделенное: Ctrl+S и Ctrl+Z
+        работают прямо в окне просмотра и переименовывают его (отзыв с работы: переименовывалось то,
+        с которого начали листать)."""
+        if self._view is not None:
+            self._view.close()
+        self._view = LargeView(self, self.folder, self.session.shown, index, on_show=self._select_photo,
+                               keys={"Ctrl+S": self.rename_selected, "Ctrl+Z": self.undo})
+        self._view.finished.connect(self._view_closed)       # закрыли крестиком или Esc
+
+    def _view_closed(self, *_args) -> None:
+        self._view = None
+
+    def _select_photo(self, name: str) -> None:
+        if name in self.session.shown:
+            row = self.session.shown.index(name)
+            self.grid.set_selection([row])
+            self.grid.scrollTo(self.grid.model_.index(row))
+
+    def _follow_view(self) -> None:
+        if self._view is not None:
+            self._select_photo(self._view.name)
 
     def closeEvent(self, event) -> None:
         if not self._closed:

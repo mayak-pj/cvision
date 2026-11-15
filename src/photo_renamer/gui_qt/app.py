@@ -23,7 +23,7 @@ from . import common, theme as theme_mod
 from .editor import ReferenceEditor
 from .review import BatchWindow
 
-TITLE = "CV"
+TITLE = "CVision"
 COLUMNS = ("Группа / папка", "Эталон", "Переименовать", "Фото", "Обработано", "Сходство")
 COLUMN_REFERENCE, COLUMN_RENAME = 1, 2
 # самая длинная надпись, которая в столбце бывает: ширина столбца считается по ней
@@ -292,12 +292,16 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Анализ прерван.")
         elif error is not None:
             self.status_label.setText("Ошибка анализа.")
-            QMessageBox.critical(self, TITLE, "Ошибка при анализе:\n%s" % error)
+            path = record_error(self.app_config.logs_path(), type(error), error, None, self.worker.last_traceback())
+            QMessageBox.critical(self, TITLE, "Ошибка при анализе:\n%s%s" % (
+                error, "\n\nПодробности записаны в файл:\n%s" % path if path else ""))
         else:
             self.session.analysis = result
             self.status_label.setText(self.session.summary())
-        self._set_busy(False)
+        # Сначала таблица по новому результату, потом кнопки: выделенная строка старой таблицы
+        # ссылается на номер группы прежнего анализа, а групп теперь может быть меньше.
         self.render()
+        self._set_busy(False)
         if self._close_requested:
             self.close()
 
@@ -468,10 +472,41 @@ class MainWindow(QMainWindow):
         self.worker.wait(timeout)
 
 
-def _show_error(kind, error, trace) -> None:
-    """Без этого PyQt5 аварийно завершает программу при любой ошибке в обработчике щелчка."""
-    traceback.print_exception(kind, error, trace)
-    QMessageBox.critical(None, TITLE, "Ошибка программы:\n%s" % error)
+ERRORS_FILE = "ошибки.txt"
+
+
+def record_error(logs_dir: str, kind, error, trace, details: str = "") -> Optional[str]:
+    """Дописывает ошибку с полным описанием места в logs/ошибки.txt. Возвращает путь или None.
+
+    Программа запускается через pythonw.exe, у которого нет консоли: без файла от ошибки остаётся
+    только окно с одной строкой («list index out of range»), и где она случилась, не узнать.
+    """
+    import datetime
+
+    path = os.path.join(logs_dir, ERRORS_FILE)
+    try:
+        os.makedirs(logs_dir, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("=== %s\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            f.write(details or "".join(traceback.format_exception(kind, error, trace)))
+            f.write("\n")
+    except OSError:
+        return None
+    return path
+
+
+def error_hook(logs_dir: str):
+    """Обработчик ошибок в окне. Без него PyQt5 аварийно завершает программу при любой ошибке
+    в обработчике щелчка."""
+    def show(kind, error, trace) -> None:
+        if sys.stderr is not None:          # у pythonw.exe консоли нет
+            traceback.print_exception(kind, error, trace)
+        path = record_error(logs_dir, kind, error, trace)
+        text = "Ошибка программы:\n%s" % error
+        if path:
+            text += "\n\nПодробности записаны в файл:\n%s" % path
+        QMessageBox.critical(None, TITLE, text)
+    return show
 
 
 def qt_plugins_dir() -> str:
@@ -505,7 +540,7 @@ def create_application() -> QApplication:
 def main(config: Optional[cfg.AppConfig] = None, warnings: List[str] = ()) -> None:
     if config is None:
         config, warnings = cfg.load_config()
-    sys.excepthook = _show_error
+    sys.excepthook = error_hook(config.logs_path())
     app = create_application()
     window = MainWindow(config, warnings)
     window.show()

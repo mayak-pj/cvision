@@ -278,11 +278,12 @@ def test_ctrl_a_selects_photos_but_stays_with_the_field(editor):
     assert win.grid.selection == set() and win.search_edit.selectedText() == "кул"
 
 
-def test_selection_buttons_and_counter(editor):
+def test_selection_keys_and_counter(editor):
     win, _, _ = editor
-    win.select_all_btn.click()
+    assert not [b for b in win.findChildren(QPushButton) if b.text() in ("Выделить всё", "Снять выделение")]
+    QTest.keyClick(win.grid, Qt.Key_A, Qt.ControlModifier)
     assert win.selection_label.text() == "Выделено: 6"
-    win.clear_btn.click()
+    QTest.keyClick(win.grid, Qt.Key_Escape)
     assert win.selection_label.text() == "Выделено: 0"
     win.grid.set_selection([1, 3])
     assert win.selection_label.text() == "Выделено: 2"
@@ -414,7 +415,7 @@ def test_window_answers_while_thumbnails_load(editor):
     win, _, _ = editor
     slow_loading(win)
     started = time.perf_counter()
-    win.select_all_btn.click()
+    QTest.keyClick(win.grid, Qt.Key_A, Qt.ControlModifier)
     assert time.perf_counter() - started < 0.1 and win.selection_label.text() == "Выделено: 6"
     assert win.worker.busy() and win.grid.loaded_count() < 6
     win.worker.cancel()
@@ -487,10 +488,47 @@ def test_reorder_moves_the_selection_with_the_photos(editor):
 def test_double_click_opens_the_photo_large(editor, monkeypatch):
     win, folder, _ = editor
     opened = []
-    monkeypatch.setattr(qt_editor, "LargeView", lambda *a: opened.append(a))
+    class View:
+        def __init__(self, *args, **kwargs):
+            opened.append(args)
+            self.finished = type("Signal", (), {"connect": lambda self, f: None})()
+
+    monkeypatch.setattr(qt_editor, "LargeView", View)
     win.grid.doubleClicked.emit(win.grid.model_.index(2))
     _, path, names, index = opened[0]
     assert path == str(folder) and names[index] == win.session.shown[2]
+
+
+def shortcut(view, sequence):
+    from PyQt5.QtGui import QKeySequence
+    from PyQt5.QtWidgets import QShortcut
+
+    return next(s for s in view.findChildren(QShortcut) if s.key() == QKeySequence(sequence))
+
+
+def test_large_view_renames_the_photo_it_shows(editor):
+    """Отзыв с работы: открыл фото двойным щелчком, пролистал стрелками, нажал Ctrl+S — переименовалось
+    то, с которого начал. Теперь открытое фото выделено в сетке, и переименовывается оно."""
+    win, folder, _ = editor
+    win.grid.doubleClicked.emit(win.grid.model_.index(1))
+    view = win._view
+    view.show_photo()
+    assert win.grid.selected_names() == [win.session.shown[1]]
+    QTest.keyClick(view, Qt.Key_Right)
+    QTest.keyClick(view, Qt.Key_Right)
+    shown = view.name
+    assert shown == win.session.shown[3] and win.grid.selected_names() == [shown]
+    pick_name(win, "Кулер")
+    shortcut(view, "Ctrl+S").activated.emit()
+    assert "Кулер.JPG" in os.listdir(str(folder)) and shown not in os.listdir(str(folder))
+    assert view.name == "Кулер.JPG" and view.caption.text().startswith("Кулер.JPG")
+    assert win.grid.selected_names() == ["Кулер.JPG"]           # выделение осталось на открытом фото
+    assert view.photos == win.session.shown                      # листается в новом порядке
+    shortcut(view, "Ctrl+Z").activated.emit()
+    assert shown in os.listdir(str(folder)) and view.name == shown
+    view.close()
+    QApplication.processEvents()
+    assert win._view is None
 
 
 def test_named_folder_teaches_categories(tmp_path, dialogs):

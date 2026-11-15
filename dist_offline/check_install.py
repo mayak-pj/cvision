@@ -148,6 +148,7 @@ def qt_window():
     command = [sys.executable, str(HERE / "check_install.py"), "--qt-probe"]
     env = dict(os.environ)
     env.pop("QT_QPA_PLATFORM", None)         # настоящий оконный модуль, не offscreen
+    env["PYTHONIOENCODING"] = "utf-8"         # иначе русский текст пробы приходит в кодировке Windows: «??????»
     try:
         done = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
                               timeout=QT_TIMEOUT)
@@ -168,7 +169,7 @@ def qt_window():
     except Exception as exc:                 # noqa — проверка не должна падать из-за отчёта
         where = "; подробности собрать не удалось: %s" % exc
     tail = (out + "\n" + done.stderr.decode("utf-8", "replace")).strip().splitlines()[-3:]
-    raise RuntimeError("новые окна не запускаются (код %s): %s%s. Прежние окна работают — CV.bat"
+    raise RuntimeError("новые окна не запускаются (код %s): %s%s. Прежние окна работают — CVision.bat"
                        % (done.returncode, " | ".join(tail) or "без сообщения", where))
 
 
@@ -279,7 +280,7 @@ def main():
             print("  - " + problem)
         print("\nПодробности: задайте переменную PHOTO_RENAMER_DEBUG=1 и запустите снова.")
         return 1
-    print("\nВсё в порядке: программу можно запускать «CV.bat».")
+    print("\nВсё в порядке: программу можно запускать «CVision.bat».")
     return 0
 
 

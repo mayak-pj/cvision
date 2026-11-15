@@ -318,3 +318,37 @@ def test_qt_plugins_folder_is_found_for_explicit_path():
     folder = qt_app.qt_plugins_dir()
     assert folder and os.path.isdir(os.path.join(folder, "platforms"))
     assert qt_app.create_application() is QApplication.instance()     # второй раз не создаётся
+
+
+def test_new_analysis_with_fewer_groups_while_a_row_is_selected(window, tmp_path):
+    """На работе: выделена папка 3-й группы прежнего проекта, анализ другого проекта с одной группой.
+    Кнопки обновлялись по старой строке раньше таблицы — «list index out of range», таблица не менялась."""
+    many = tmp_path / "Много групп"
+    shoot(many / "A", [1, 2, 3, 4, 5, 6])
+    shoot(many / "B", [21, 22, 23, 24, 25, 26])
+    shoot(many / "C", [41, 42, 43, 44, 45, 46])
+    window.app_config.group_threshold = 0.3        # разные детали — разные группы
+    analyzed(window, many)
+    assert len(window.analysis.groups) >= 2
+    last = window.tree.topLevelItem(window.tree.topLevelItemCount() - 1).child(0)
+    last.setSelected(True)
+    errors = []
+    hook, sys.excepthook = sys.excepthook, lambda kind, error, trace: errors.append(error)
+    try:
+        one = tmp_path / "Одна группа"
+        shoot(one / "SN1", [1, 2, 3, 4, 5, 6])
+        analyzed(window, one)
+    finally:
+        sys.excepthook = hook
+    assert errors == []
+    assert window.tree.topLevelItemCount() == 1 and "групп: 1" in window.status_label.text()
+    assert not window.reference_btn.isEnabled()
+
+
+def test_window_error_is_written_to_the_log(tmp_path):
+    try:
+        [][1]
+    except IndexError as exc:
+        path = qt_app.record_error(str(tmp_path / "logs"), type(exc), exc, exc.__traceback__)
+    text = open(path, encoding="utf-8").read()
+    assert path.endswith("ошибки.txt") and "IndexError" in text and "test_window_error_is_written_to_the_log" in text

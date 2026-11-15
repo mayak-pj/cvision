@@ -46,6 +46,22 @@ class AppConfig:
     def names_path(self) -> str:
         return self.names_file if os.path.isabs(self.names_file) else os.path.join(APP_DIR, self.names_file)
 
+    def ensure_names_file(self) -> Optional[str]:
+        """Первый запуск: списка категорий ещё нет — он начинается с образца names.example.txt.
+        Иначе в редакторе пустой список, пока программа не наберёт названия из готовых эталонов.
+        Возвращает путь созданного файла или None."""
+        path = self.names_path()
+        example = os.path.join(APP_DIR, "names.example.txt")
+        if os.path.exists(path) or not os.path.isfile(example):
+            return None
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            with open(example, encoding="utf-8-sig") as src, open(path, "w", encoding="utf-8") as dst:
+                dst.write(src.read())
+        except OSError:
+            return None
+        return path
+
     def cache_path(self) -> str:
         folder = self.cache_dir if os.path.isabs(self.cache_dir) else os.path.join(APP_DIR, self.cache_dir)
         return os.path.join(folder, "photos.sqlite")

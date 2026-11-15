@@ -75,3 +75,18 @@ def test_unknown_settings_still_warn():
     """Опечатка в названии настройки должна быть видна."""
     _, warnings = cfg.from_dict({"min_confidense": 60})
     assert any("min_confidense" in w for w in warnings)
+
+
+def test_names_file_starts_from_the_example(tmp_path):
+    """Первый запуск сборки: names.txt нет — список категорий не должен быть пустым."""
+    from photo_renamer import config as cfg
+    from photo_renamer.names import NamesList
+
+    config = cfg.AppConfig()
+    config.names_file = str(tmp_path / "names.txt")
+    assert config.ensure_names_file() == config.names_file
+    example = NamesList(os.path.join(cfg.APP_DIR, "names.example.txt")).names()
+    assert example and NamesList(config.names_file).names() == example
+    (tmp_path / "names.txt").write_text("Своя деталь\n", encoding="utf-8")
+    assert config.ensure_names_file() is None                   # готовый список не трогается
+    assert NamesList(config.names_file).names() == ["Своя деталь"]

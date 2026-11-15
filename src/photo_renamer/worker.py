@@ -71,6 +71,10 @@ class Worker:
             self.widget.after(POLL_MS, self._poll)
         return True
 
+    def last_traceback(self) -> str:
+        """Где именно упала последняя задача (текст для журнала ошибок)."""
+        return self._traceback
+
     def cancel(self) -> None:
         self._cancel.set()
 

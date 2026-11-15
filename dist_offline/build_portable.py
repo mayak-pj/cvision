@@ -2,13 +2,13 @@
 
 Собирает папку, которую достаточно скопировать на рабочий компьютер:
 
-    CV\\
+    CVision\\
         python\\                 embeddable Python 3.8.10 + библиотеки (с PyQt5) + файлы tkinter
         model\\                  модель CLIP (если указана --model)
         src\\photo_renamer\\      код программы
         run.py
         config.example.json, names.example.txt
-        CV.bat  ярлык запуска; «CV (новые окна).bat» — окна на PyQt5
+        CVision.bat  ярлык запуска; «CVision (новые окна).bat» — окна на PyQt5
         Инструкция.txt
 
 Почему так:
@@ -20,7 +20,7 @@
 
 Запуск (см. dist_offline/README.md):
     python build_portable.py --embed python-3.8.10-embed-amd64.zip --wheels wheels
-                             --tk-from "C:\\Program Files\\Python38" --out "CV"
+                             --tk-from "C:\\Program Files\\Python38" --out "CVision"
     python build_portable.py ... --dry-run     # только проверить и показать план
 """
 
@@ -299,8 +299,8 @@ def copy_project(project: Path, out: Path) -> None:
 
 
 def write_launchers(out: Path) -> None:
-    (out / "CV.bat").write_text(LAUNCHER, encoding="cp866")
-    (out / "CV (новые окна).bat").write_text(QT_LAUNCHER, encoding="cp866")
+    (out / "CVision.bat").write_text(LAUNCHER, encoding="cp866")
+    (out / "CVision (новые окна).bat").write_text(QT_LAUNCHER, encoding="cp866")
     (out / "Запуск с консолью (для ошибок).bat").write_text(CONSOLE_LAUNCHER, encoding="cp866")
     # отдельный ярлык для проверки: иначе её запускают чужим Python и получают «No module named numpy»
     (out / "Проверка сборки.bat").write_text(CHECK_LAUNCHER, encoding="cp866")

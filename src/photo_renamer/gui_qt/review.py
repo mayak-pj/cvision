@@ -22,8 +22,11 @@ from .common import MAX_SIDE_WIDTH, MAX_SIDES, MIN_SIDE_WIDTH  # noqa: F401 — 
 from .photoview import LargeView, to_pixmap
 
 TITLE = "Переименование папок"
+# Процентов уверенности в окне нет (отзыв с работы): 2% бывает верным, 70% — ошибкой, и цифра только
+# сбивает. Сомнительные фото по-прежнему стоят первыми и помечены в «Состоянии»; в журнале .csv цифра есть.
 COLUMNS = (("Фото", review_session.SORT_PHOTO), ("Новое имя", review_session.SORT_NEW),
-           ("Уверенность", review_session.SORT_CONFIDENCE), ("Состояние", review_session.SORT_STATUS))
+           ("Состояние", review_session.SORT_STATUS))
+COLUMN_STATUS = 2
 COLUMN_PHOTO = 0
 PHOTO_TEXT_WIDTH = 200    # сколько места в первом столбце остаётся под имя файла
 NEW_NAME_WIDTH = 280
@@ -127,7 +130,8 @@ class BatchWindow(QMainWindow):
         body.addWidget(self.tree, 1)
         body.addWidget(self._build_side())
         layout.addLayout(self._build_bottom())
-        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.apply_folder)
+        # по отзыву с работы: Ctrl+S — частое действие «применить категорию», а не переименование всей папки
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.apply_selected_category)
         QShortcut(QKeySequence("Ctrl+Z"), self, activated=self.undo_edit)
         # отмена работает, где бы ни был курсор: поля ввода не забирают Ctrl+Z себе
         for field in (self.search_edit, self.sides_spin):
@@ -178,8 +182,8 @@ class BatchWindow(QMainWindow):
         # заголовки считаются со стрелкой сортировки, столбец состояния — по самой длинной надписи
         padding = 2 * theme_mod.SPACE["lg"]
         self.tree.setColumnWidth(1, NEW_NAME_WIDTH)
-        self.tree.setColumnWidth(2, metrics.horizontalAdvance(COLUMNS[2][0] + " ↑") + padding)
-        self.tree.setColumnWidth(3, max(metrics.horizontalAdvance(text) for text in STATUS_TEXT.values()) + padding)
+        self.tree.setColumnWidth(COLUMN_STATUS, max(metrics.horizontalAdvance(text) for text in
+                                                    list(STATUS_TEXT.values()) + [COLUMNS[2][0] + " ↑"]) + padding)
         self._apply_thumb_size()
         self.tree.itemSelectionChanged.connect(self._on_row_select)
         self.tree.itemDoubleClicked.connect(lambda item, _column: self.open_large(item))
@@ -228,7 +232,8 @@ class BatchWindow(QMainWindow):
         self.sides_spin.setFixedWidth(72)
         sides.addWidget(self.sides_spin)
         panel.addLayout(sides)
-        self.apply_category_btn = QPushButton("Применить к выбранным")
+        self.apply_category_btn = QPushButton(
+            "Применить к выбранным (%s)" % QKeySequence("Ctrl+S").toString(QKeySequence.NativeText))
         self.apply_category_btn.clicked.connect(lambda: self.apply_selected_category())
         panel.addWidget(self.apply_category_btn)
         self.exclude_btn = QPushButton("Не переименовывать")
@@ -246,12 +251,11 @@ class BatchWindow(QMainWindow):
         self.status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         bottom.addWidget(self.status_label, 1)
         undo_key = QKeySequence("Ctrl+Z").toString(QKeySequence.NativeText)
-        save_key = QKeySequence("Ctrl+S").toString(QKeySequence.NativeText)
         self.undo_edit_btn = self._bottom_button(bottom, "Отменить правку (%s)" % undo_key, self.undo_edit)
         self.undo_btn = self._bottom_button(bottom, "Отменить переименование", self.undo_folder)
         self.undo_btn.setEnabled(False)
         self.skip_btn = self._bottom_button(bottom, "Пропустить папку", self.skip_folder)
-        self.apply_btn = self._bottom_button(bottom, "Переименовать папку (%s)" % save_key, self.apply_folder)
+        self.apply_btn = self._bottom_button(bottom, "Переименовать папку", self.apply_folder)
         self.apply_btn.setProperty("accent", True)
         self.close_btn = self._bottom_button(bottom, "Закрыть", self.close)
         return bottom
@@ -390,7 +394,8 @@ class BatchWindow(QMainWindow):
         self._update_counts()
 
     def _make_row(self, photo) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([photo.filename] + list(review_session.row_values(photo)))
+        new_name, _confidence, status = review_session.row_values(photo)
+        item = QTreeWidgetItem([photo.filename, new_name, status])
         item.setSizeHint(COLUMN_PHOTO, QSize(1, self.thumb_size + theme_mod.SPACE["sm"]))
         icon = self._pixmaps.get(photo.filename)
         if icon is not None:
@@ -490,7 +495,7 @@ class BatchWindow(QMainWindow):
         alternatives = self.session.alternatives(self.session.match.photos[indexes[0]])
         self.candidates.addWidget(QLabel("Похоже ещё на:" if alternatives else "Других вариантов нет"))
         for number, candidate in enumerate(alternatives[:ALTERNATIVES], start=1):
-            self._candidate_button("%d — %s — %.0f%%" % (number, candidate.category, candidate.confidence),
+            self._candidate_button("%d — %s" % (number, candidate.category),
                                    lambda _checked=False, c=candidate.category: self.apply_category(c))
         self._candidate_button("%d — Не переименовывать" % (ALTERNATIVES + 1),
                                lambda _checked=False: self.exclude_selected())

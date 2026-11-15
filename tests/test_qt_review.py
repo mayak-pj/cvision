@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image  # noqa: E402
 from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
-from PyQt5.QtGui import QKeyEvent, QWheelEvent  # noqa: E402
+from PyQt5.QtGui import QKeyEvent, QMouseEvent, QWheelEvent  # noqa: E402
 from PyQt5.QtTest import QTest  # noqa: E402
 from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton  # noqa: E402
 
@@ -122,7 +122,8 @@ def test_preview_is_built(batch):
 def test_rows_show_what_the_session_says(batch):
     win, _ = batch
     for item, photo in zip(rows(win), win.session.display_photos()):
-        assert [item.text(k) for k in range(4)] == [photo.filename] + list(review_session.row_values(photo))
+        new_name, _confidence, status = review_session.row_values(photo)
+        assert [item.text(k) for k in range(3)] == [photo.filename, new_name, status]
 
 
 def test_candidates_are_numbered_and_last_is_refusal(batch):
@@ -166,7 +167,7 @@ def test_enter_confirms_and_moves_down(batch):
     select(win, 0)
     filename = rows(win)[0].text(0)
     QTest.keyClick(win.tree, Qt.Key_Return)
-    assert row_of(win, filename).text(3) == "выбрано вручную"
+    assert row_of(win, filename).text(2) == "выбрано вручную"
     assert win.tree.selectedItems() == [win.tree.topLevelItem(1)]
 
 
@@ -204,7 +205,8 @@ def test_undo_without_edits_says_so(batch):
 
 
 def test_shortcuts_work_from_the_category_field(batch):
-    """Ctrl+Z в поле ввода отменяет правку фото, а не набранный текст; Ctrl+S — переименовывает."""
+    """Ctrl+Z в поле ввода отменяет правку фото, а не набранный текст; Ctrl+S применяет выбранную
+    категорию к выделенным фото и папку не переименовывает (так попросили по отзыву с работы)."""
     win, root = batch
     win.show()
     win.activateWindow()
@@ -219,8 +221,15 @@ def test_shortcuts_work_from_the_category_field(batch):
     QTest.keyClick(win.search_edit, Qt.Key_Z, Qt.ControlModifier)
     assert row_of(win, filename).text(1) == was
     before = sorted(os.listdir(str(root / "SN2")))
+    category = win.categories_list.item(win.categories_list.count() - 1).text()
+    win.categories_list.setCurrentRow(win.categories_list.count() - 1)
+    select(win, 0)
+    filename = rows(win)[0].text(0)
+    win.search_edit.setFocus()
     QTest.keyClick(win.search_edit, Qt.Key_S, Qt.ControlModifier)
-    assert sorted(os.listdir(str(root / "SN2"))) != before
+    assert row_of(win, filename).text(1).startswith(category)
+    assert sorted(os.listdir(str(root / "SN2"))) == before          # папка не переименована
+    assert "Ctrl+S" not in win.apply_btn.text() and "Ctrl+S" in win.apply_category_btn.text().replace("⌘", "Ctrl+")
 
 
 def test_sorting_by_column_headers(batch):
@@ -383,7 +392,7 @@ def test_apply_category_from_the_list(batch):
     filename = rows(win)[0].text(0)
     choose_category(win, "Кулер")
     win.apply_category_btn.click()
-    assert row_of(win, filename).text(3) == "выбрано вручную"
+    assert row_of(win, filename).text(2) == "выбрано вручную"
     assert row_of(win, filename).text(1).startswith("Кулер")
 
 
@@ -546,7 +555,7 @@ def test_large_view_steps_and_closes(tmp_path):
     view = photoview.LargeView(None, str(folder), ["А.JPG", "Б.JPG"], 0)
     view.setAttribute(Qt.WA_DeleteOnClose, False)
     view.show_photo()
-    assert view.caption.text() == "А.JPG   (1 из 2)" and view.label.pixmap() is not None
+    assert view.caption.text() == "А.JPG   (1 из 2)" and view.canvas.pixmap is not None
     QTest.keyClick(view, Qt.Key_Right)
     assert view.caption.text() == "Б.JPG   (2 из 2)" and view.windowTitle() == "Б.JPG"
     QTest.keyClick(view, Qt.Key_Right)
@@ -629,5 +638,58 @@ def test_large_view_key_during_reading_does_not_mix_up_photos(tmp_path, monkeypa
     assert read == ["Б.JPG"]
     QApplication.processEvents()              # стрелка обрабатывается после чтения: следующий кадр
     assert read == ["Б.JPG", "В.JPG"]
-    assert view.caption.text().startswith("В.JPG") and view._loaded == view.index == 2
+    assert view.caption.text().startswith("В.JPG") and view._loaded == "В.JPG" and view.index == 2
     view.close()
+
+
+def test_no_confidence_percent_in_the_window(batch):
+    """Отзыв с работы: проценты уверенности сбивают с толку — в окне их нет, сомнительные помечены словами."""
+    win, _ = batch
+    headers = [win.tree.headerItem().text(c) for c in range(win.tree.columnCount())]
+    assert not any("Уверенность" in h for h in headers)
+    texts = [rows(win)[k].text(c) for k in range(len(rows(win))) for c in range(win.tree.columnCount())]
+    assert not any(t.endswith("%") for t in texts)
+    select(win, 0)
+    buttons = [b.text() for b in win.side.findChildren(QPushButton)]
+    assert buttons and not any("%" in b for b in buttons)
+
+
+def test_large_view_zooms_at_cursor_and_pans(tmp_path, monkeypatch):
+    """Отзыв с работы: колесо приближает фото, мышью его можно двигать, двойной щелчок — снова целиком.
+    При первом приближении фото перечитывается крупнее, чтобы были видны надписи."""
+    folder = tmp_path / "фото"
+    shoot(folder, [1], names=["А.JPG"])
+    view = photoview.LargeView(None, str(folder), ["А.JPG"], 0)
+    view.setAttribute(Qt.WA_DeleteOnClose, False)
+    view.resize(800, 600)
+    view.show_photo()
+    canvas = view.canvas
+    sizes = []
+    original = photoview.feat.load_image
+    monkeypatch.setattr(photoview.feat, "load_image", lambda path, size: (sizes.append(size), original(path, size))[1])
+    whole = canvas.photo_rect()
+    corner = QPointF(whole.left() + whole.width() * 0.25, whole.top() + whole.height() * 0.25)
+    spot_before = ((corner.x() - whole.left()) / whole.width(), (corner.y() - whole.top()) / whole.height())
+    canvas.zoom_at(2.0, corner)
+    zoomed = canvas.photo_rect()
+    assert canvas.zoom == 2.0 and abs(zoomed.width() - 2 * whole.width()) < 1
+    spot_after = ((corner.x() - zoomed.left()) / zoomed.width(), (corner.y() - zoomed.top()) / zoomed.height())
+    assert abs(spot_after[0] - spot_before[0]) < 0.01 and abs(spot_after[1] - spot_before[1]) < 0.01
+    assert sizes == [photoview.ZOOM_SIZE]                 # перечитано крупнее, один раз
+    canvas.zoom_at(1.25, corner)
+    assert sizes == [photoview.ZOOM_SIZE]
+    left = canvas.photo_rect().left()
+    QTest.mousePress(canvas, Qt.LeftButton, Qt.NoModifier, QPoint(400, 300))
+    # QTest.mouseMove шлёт движение без нажатой кнопки — как рука, ведём с нажатой
+    QApplication.sendEvent(canvas, QMouseEvent(QEvent.MouseMove, QPointF(300, 300), Qt.NoButton, Qt.LeftButton,
+                                               Qt.NoModifier))
+    QTest.mouseRelease(canvas, Qt.LeftButton, Qt.NoModifier, QPoint(300, 300))
+    assert canvas.photo_rect().left() < left               # фото уехало вслед за мышью
+    canvas.zoom_at(100.0, corner)
+    assert canvas.zoom == photoview.MAX_ZOOM
+    canvas.mouseDoubleClickEvent(None)
+    assert canvas.zoom == 1.0 and canvas.photo_rect() == whole
+    canvas.zoom_at(0.5, corner)
+    assert canvas.zoom == 1.0                             # мельче, чем целиком, не бывает
+    view.close()
+    view.deleteLater()

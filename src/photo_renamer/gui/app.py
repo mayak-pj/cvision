@@ -21,7 +21,7 @@ from .editor import ReferenceEditor
 from .worker import Cancelled, Worker
 from .review import BatchWindow
 
-TITLE = "CV"
+TITLE = "CVision"
 
 # Отметки в таблице пишутся словами: значки вроде «✔» на Windows 7 в tkinter выводятся не всюду.
 

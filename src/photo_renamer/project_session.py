@@ -169,7 +169,13 @@ class ProjectSession:
         return rows
 
     def available_actions(self, folder: Optional[grouping.FolderInfo], group: Optional[int]) -> Dict[str, bool]:
-        """Какие действия доступны для выбранной строки. В процессе анализа folder и group — None."""
+        """Какие действия доступны для выбранной строки. В процессе анализа folder и group — None.
+
+        Строка, выделенная в таблице прежнего анализа, может ссылаться на группу, которой в новом
+        уже нет: такая строка считается невыделенной."""
+        if self.analysis is None or group is None or not 0 <= group < len(self.analysis.groups) or \
+                (folder is not None and not any(f is folder for f in self.analysis.groups[group].folders)):
+            folder, group = None, None
         is_ref = folder is not None and self.analysis.groups[group].reference is folder
         return {
             "make_reference": folder is not None and not is_ref,

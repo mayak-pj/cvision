@@ -73,7 +73,7 @@ def test_wrong_platform_wheels_detected(tmp_path, parts):
 
 def test_build_creates_distribution(tmp_path, parts):
     embed, wheels, tk_from = parts
-    out = tmp_path / "CV"
+    out = tmp_path / "CVision"
     build_portable.build(embed, wheels, tk_from, out, ROOT)
 
     python_dir = out / "python"
@@ -103,7 +103,7 @@ def test_build_creates_distribution(tmp_path, parts):
     assert (out / "run.py").exists() and (out / "src" / "photo_renamer" / "matcher.py").exists()
     assert not list((out / "src").rglob("__pycache__"))
     assert (out / "config.example.json").exists() and (out / "names.example.txt").exists()
-    assert (out / "CV.bat").exists()
+    assert (out / "CVision.bat").exists()
     assert (out / "Запуск с консолью (для ошибок).bat").exists()
     assert (out / "Инструкция.txt").exists() and (out / "check_install.py").exists()
     assert (out / "logs").is_dir() and (out / "cache").is_dir()
@@ -246,11 +246,11 @@ def test_build_with_qt_has_its_files_and_launcher(tmp_path, parts, capsys):
     _qt_wheels(wheels)
     assert build_portable.wrong_platform_wheels(wheels) == []     # abi3 и py3-none-win_amd64 годятся
     assert "Новые окна (PyQt5): есть" in build_portable.plan(embed, wheels, tk_from, tmp_path / "out")
-    out = tmp_path / "CV"
+    out = tmp_path / "CVision"
     build_portable.build(embed, wheels, tk_from, out, ROOT)
     assert "Новые окна (PyQt5): есть" in capsys.readouterr().out
     assert (out / "python" / "Lib" / "site-packages" / "PyQt5" / "Qt5" / "plugins" / "platforms" / "qwindows.dll").is_file()
-    launcher = (out / "CV (новые окна).bat").read_text(encoding="cp866")
+    launcher = (out / "CVision (новые окна).bat").read_text(encoding="cp866")
     assert "pythonw.exe" in launcher and "run.py\" --qt" in launcher
 
 
@@ -258,13 +258,13 @@ def test_build_with_broken_qt_is_an_error(tmp_path, parts):
     embed, wheels, tk_from = parts
     _qt_wheels(wheels, skip="PyQt5/Qt5/plugins/platforms/qwindows.dll")
     with pytest.raises(build_portable.BuildError, match="qwindows"):
-        build_portable.build(embed, wheels, tk_from, tmp_path / "CV", ROOT)
+        build_portable.build(embed, wheels, tk_from, tmp_path / "CVision", ROOT)
 
 
 def test_build_without_qt_says_only_old_windows(tmp_path, parts, capsys):
     embed, wheels, tk_from = parts
     assert "НЕТ колеса PyQt5-Qt5" in build_portable.plan(embed, wheels, tk_from, tmp_path / "out")
-    build_portable.build(embed, wheels, tk_from, tmp_path / "CV", ROOT)
+    build_portable.build(embed, wheels, tk_from, tmp_path / "CVision", ROOT)
     assert "только прежние окна" in capsys.readouterr().out
 
 
@@ -344,6 +344,7 @@ def test_qt_failure_is_explained_and_old_windows_named(tmp_path, monkeypatch):
     text = str(error.value)
     assert "Прежние окна работают" in text and "platform plugin" in text
     assert "QT_QPA_PLATFORM" not in calls[0]                  # настоящий оконный модуль, не offscreen
+    assert calls[0]["PYTHONIOENCODING"] == "utf-8"             # на Windows 7 вместо русских букв было «??????»
     assert calls[1].get("QT_DEBUG_PLUGINS") == "1"
     assert "checking directory" in (tmp_path / "logs" / "проверка_qt.txt").read_text(encoding="utf-8")
 
