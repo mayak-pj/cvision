@@ -169,7 +169,7 @@ def qt_window():
     except Exception as exc:                 # noqa — проверка не должна падать из-за отчёта
         where = "; подробности собрать не удалось: %s" % exc
     tail = (out + "\n" + done.stderr.decode("utf-8", "replace")).strip().splitlines()[-3:]
-    raise RuntimeError("новые окна не запускаются (код %s): %s%s. Прежние окна работают — CVision.bat"
+    raise RuntimeError("новые окна не запускаются (код %s): %s%s. Прежние окна работают — «CVision (прежние окна).bat»"
                        % (done.returncode, " | ".join(tail) or "без сообщения", where))
 
 

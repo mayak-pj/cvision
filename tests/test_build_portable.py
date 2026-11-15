@@ -250,8 +250,11 @@ def test_build_with_qt_has_its_files_and_launcher(tmp_path, parts, capsys):
     build_portable.build(embed, wheels, tk_from, out, ROOT)
     assert "Новые окна (PyQt5): есть" in capsys.readouterr().out
     assert (out / "python" / "Lib" / "site-packages" / "PyQt5" / "Qt5" / "plugins" / "platforms" / "qwindows.dll").is_file()
-    launcher = (out / "CVision (новые окна).bat").read_text(encoding="cp866")
-    assert "pythonw.exe" in launcher and "run.py\" --qt" in launcher
+    main = (out / "CVision.bat").read_text(encoding="cp866")
+    assert "--tk" not in main and "--qt" not in main          # окна по настройке, по умолчанию новые
+    old = (out / "CVision (прежние окна).bat").read_text(encoding="cp866")
+    assert "pythonw.exe" in old and "run.py\" --tk" in old
+    assert not (out / "CVision (новые окна).bat").exists()
 
 
 def test_build_with_broken_qt_is_an_error(tmp_path, parts):

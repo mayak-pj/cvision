@@ -8,7 +8,7 @@
         src\\photo_renamer\\      код программы
         run.py
         config.example.json, names.example.txt
-        CVision.bat  ярлык запуска; «CVision (новые окна).bat» — окна на PyQt5
+        CVision.bat  ярлык запуска (окна на PyQt5); «CVision (прежние окна).bat» — окна на tkinter
         Инструкция.txt
 
 Почему так:
@@ -62,10 +62,10 @@ rem Запуск программы. Консоль не нужна: pythonw.exe
 set HERE=%~dp0
 start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" %*
 """
-QT_LAUNCHER = """@echo off
-rem Новые окна (PyQt5) на этот запуск, настройка interface не меняется.
+TK_LAUNCHER = """@echo off
+rem Прежние окна (tkinter) на этот запуск, настройка interface не меняется.
 set HERE=%~dp0
-start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" --qt
+start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" --tk
 """
 CHECK_LAUNCHER = """@echo off
 rem Проверка сборки. Запускать нужно именно встроенным Python: в чужом нет ни библиотек, ни tkinter.
@@ -300,7 +300,7 @@ def copy_project(project: Path, out: Path) -> None:
 
 def write_launchers(out: Path) -> None:
     (out / "CVision.bat").write_text(LAUNCHER, encoding="cp866")
-    (out / "CVision (новые окна).bat").write_text(QT_LAUNCHER, encoding="cp866")
+    (out / "CVision (прежние окна).bat").write_text(TK_LAUNCHER, encoding="cp866")
     (out / "Запуск с консолью (для ошибок).bat").write_text(CONSOLE_LAUNCHER, encoding="cp866")
     # отдельный ярлык для проверки: иначе её запускают чужим Python и получают «No module named numpy»
     (out / "Проверка сборки.bat").write_text(CHECK_LAUNCHER, encoding="cp866")

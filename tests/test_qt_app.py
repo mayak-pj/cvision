@@ -242,8 +242,24 @@ def test_every_icon_is_drawn(window):
 
 def test_interface_setting_is_checked():
     assert cfg.from_dict({"interface": "qt"})[0].interface == "qt"
+    assert cfg.from_dict({"interface": "tk"})[0].interface == "tk"
     config, warnings = cfg.from_dict({"interface": "gtk"})
-    assert config.interface == "tk" and warnings
+    assert config.interface == "qt" and warnings
+
+
+def test_new_windows_are_default(monkeypatch):
+    """Без настройки и без ключа открываются окна на PyQt5."""
+    class Qt:
+        @staticmethod
+        def main(config, warnings):
+            opened.append("qt")
+
+    opened = []
+    monkeypatch.setattr(cfg, "load_config", lambda: cfg.from_dict({}))
+    monkeypatch.setattr(launcher, "load_qt", lambda: Qt)
+    monkeypatch.setattr(cfg.AppConfig, "ensure_names_file", lambda self: None)
+    launcher.main()
+    assert opened == ["qt"]
 
 
 def test_launcher_falls_back_when_qt_is_missing(monkeypatch):
