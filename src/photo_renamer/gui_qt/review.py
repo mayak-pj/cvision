@@ -96,6 +96,7 @@ class BatchWindow(QMainWindow):
         self.thumb_size = review_session.clamp_thumb_size(getattr(app_config, "review_thumb", 96))
         self._pixmaps: Dict[str, QIcon] = {}
         self._items: Dict[int, QTreeWidgetItem] = {}      # номер фото → строка таблицы
+        self._view: Optional[LargeView] = None             # открытое крупно фото: правится оно
         self._thumb_queue: List[int] = []
         self._busy = False
         self._cancel = False
@@ -353,6 +354,7 @@ class BatchWindow(QMainWindow):
         self.finish()
 
     def _show_folder(self) -> None:
+        self._close_view()         # в новой папке другие фото
         self._pixmaps.clear()      # имена файлов в папках повторяются, а снимки в них другие
         self.session.resort()
         self.render_rows()
@@ -449,10 +451,67 @@ class BatchWindow(QMainWindow):
             item.setIcon(COLUMN_PHOTO, icon)
 
     def open_large(self, item: QTreeWidgetItem) -> None:
-        """Показывает фото крупно: стрелки листают папку, Esc закрывает."""
-        index = next((k for k, row in self._items.items() if row is item), None)
-        if index is not None and self.session.folder is not None:
-            LargeView(self, self.session.folder.path, self.session.photo_names(), index)
+        """Фото крупно. Листается в порядке таблицы, открытое фото и есть выделенная строка:
+        цифры, Enter, Ctrl+S и Ctrl+Z работают прямо в просмотре, а под фото видны новое имя
+        и варианты на цифры (отзыв с работы: разбирать папку, не закрывая просмотр)."""
+        row = self.tree.indexOfTopLevelItem(item)
+        if row < 0 or self.session.folder is None:
+            return
+        self._close_view()
+        self._view = LargeView(self, self.session.folder.path, self._table_names(), row,
+                               on_show=self._select_name, on_key=self._view_key, hint=self._view_hint,
+                               keys={"Ctrl+S": lambda: self._in_view(self.apply_selected_category),
+                                     "Ctrl+Z": lambda: self._in_view(self.undo_edit)})
+        self._view.finished.connect(self._view_closed)       # закрыли крестиком или Esc
+
+    def _view_closed(self, *_args) -> None:
+        self._view = None
+
+    def _close_view(self) -> None:
+        if self._view is not None:
+            self._view.close()
+            self._view = None
+
+    def _table_names(self) -> List[str]:
+        return [self.tree.topLevelItem(row).text(COLUMN_PHOTO) for row in range(self.tree.topLevelItemCount())]
+
+    def _photo_by_name(self, name: str):
+        return next((p for p in self.session.match.photos if p.filename == name), None)
+
+    def _select_name(self, name: str) -> None:
+        photo = self._photo_by_name(name)
+        item = self._items.get(photo.index) if photo is not None else None
+        if item is not None and self._selected_indexes() != [photo.index]:
+            self._select_items([item])
+
+    def _view_key(self, key: int) -> bool:
+        if key not in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_0, Qt.Key_Delete, Qt.Key_Backspace) and \
+                not Qt.Key_1 <= key <= Qt.Key_1 + ALTERNATIVES:
+            return False
+        self._in_view(lambda: self.handle_table_key(key))
+        return True
+
+    def _in_view(self, action) -> None:
+        """Правка из просмотра: после неё выделение ушло на другую строку — просмотр идёт за ним."""
+        action()
+        if self._view is None:
+            return
+        indexes = self._selected_indexes()
+        item = self._items.get(indexes[0]) if indexes else None
+        name = item.text(COLUMN_PHOTO) if item is not None else self._view.name
+        self._view.show_name(self._table_names(), name)
+
+    def _view_hint(self, name: str) -> str:
+        """Под фото: какое имя оно получит и что поставят цифры."""
+        photo = self._photo_by_name(name) if self.session.match is not None else None
+        if photo is None:
+            return ""
+        new_name, _confidence, status = review_session.row_values(photo)
+        choices = ["%d — %s" % (number, candidate.category) for number, candidate
+                   in enumerate(self.session.alternatives(photo)[:ALTERNATIVES], start=1)]
+        choices.append("%d — не переименовывать" % (ALTERNATIVES + 1))
+        first = "Новое имя: %s" % new_name + ("  (%s)" % status if status else "")
+        return "%s\n%s      Enter — подтвердить" % (first, "      ".join(choices))
 
     # --- выделение ----------------------------------------------------------------------------
 
@@ -698,6 +757,7 @@ class BatchWindow(QMainWindow):
         self.next_folder()
 
     def finish(self) -> None:
+        self._close_view()
         self._finished = True
         self._thumb_queue = []
         self.header_label.set_full_text("Готово")

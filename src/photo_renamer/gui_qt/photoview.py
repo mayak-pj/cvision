@@ -156,16 +156,22 @@ class LargeView(QDialog):
 
     on_show(имя) — какое фото сейчас открыто (редактор выделяет его в сетке); keys — сочетания
     клавиш, которые работают и в этом окне (в редакторе Ctrl+S и Ctrl+Z переименовывают открытое фото).
+    on_key(клавиша) — клавиши без Ctrl (цифры, Enter в окне переименования); True — клавиша обработана.
+    hint(имя) — строка под фото: в окне переименования новое имя и варианты на цифры.
     """
 
     def __init__(self, parent, folder: str, photos: List[str], index: int,
                  on_show: Optional[Callable[[str], None]] = None,
-                 keys: Optional[Dict[str, Callable[[], None]]] = None):
+                 keys: Optional[Dict[str, Callable[[], None]]] = None,
+                 on_key: Optional[Callable[[int], bool]] = None,
+                 hint: Optional[Callable[[str], str]] = None):
         super().__init__(parent)
         self.folder = folder
         self.photos = list(photos)
         self.index = index
         self.on_show = on_show
+        self.on_key = on_key
+        self.hint_text = hint
         self._pixmap: Optional[QPixmap] = None      # прочитанное фото
         self._loaded: Optional[str] = None          # какое фото прочитано (имя файла)
         self._zoomed: Optional[str] = None          # какое фото прочитано крупно, для приближения
@@ -180,6 +186,11 @@ class LargeView(QDialog):
         self.caption = QLabel()
         self.caption.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.caption)
+        self.hint = QLabel()
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)
+        self.hint.setVisible(hint is not None)
+        layout.addWidget(self.hint)
         for sequence, action in (keys or {}).items():
             QShortcut(QKeySequence(sequence), self, activated=action)
         self.caption.setText("%s — загрузка…" % self.photos[self.index])
@@ -198,6 +209,9 @@ class LargeView(QDialog):
             self.step(-1)
         elif event.key() == Qt.Key_Right:
             self.step(1)
+        elif (self.on_key is not None and not event.modifiers() & ~Qt.KeypadModifier
+              and self.on_key(event.key())):
+            pass
         else:
             super().keyPressEvent(event)        # Esc закрывает окно
 
@@ -214,6 +228,16 @@ class LargeView(QDialog):
             value = getattr(self, attr)
             if value is not None:
                 setattr(self, attr, renamed.get(value, value))
+        self.show_photo()
+
+    def show_name(self, photos: List[str], name: str) -> None:
+        """Другой порядок листания и фото, которое показать (окно переименования: после правки
+        выделение уходит на следующую строку таблицы, и просмотр идёт за ним)."""
+        self.photos = list(photos)
+        if name in self.photos:
+            self.index = self.photos.index(name)
+        else:
+            self.index = min(self.index, len(self.photos) - 1)
         self.show_photo()
 
     def _read(self, name: str, size: int) -> QPixmap:
@@ -237,12 +261,18 @@ class LargeView(QDialog):
                 self.caption.setText("Не удалось открыть: %s" % exc)
                 if self.on_show:
                     self.on_show(name)
+                self._show_hint()
                 return
             self._loaded, self._zoomed = name, None
             self.canvas.set_pixmap(self._pixmap)
         self.caption.setText("%s   (%d из %d)" % (name, self.index + 1, len(self.photos)))
         if self.on_show:
             self.on_show(name)
+        self._show_hint()
+
+    def _show_hint(self) -> None:
+        if self.hint_text is not None:
+            self.hint.setText(self.hint_text(self.name))
 
     def _load_large(self) -> None:
         """Первое приближение: фото перечитывается крупнее, иначе надписи на детали расплываются."""

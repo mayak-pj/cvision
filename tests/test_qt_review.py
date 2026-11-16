@@ -444,11 +444,98 @@ def test_side_panel_fits_the_longest_name(batch):
 def test_double_click_opens_the_photo_large(batch, monkeypatch):
     win, _ = batch
     opened = []
-    monkeypatch.setattr(qt_review, "LargeView", lambda *a: opened.append(a))
+    monkeypatch.setattr(qt_review, "LargeView", lambda *a, **k: opened.append(a) or FakeView())
     item = win.tree.topLevelItem(2)
     win.tree.itemDoubleClicked.emit(item, 1)
     _, folder, names, index = opened[0]
     assert folder == win.session.folder.path and names[index] == item.text(0)
+    assert names == [row.text(0) for row in rows(win)]       # листается в порядке таблицы
+
+
+class FakeView:
+    class finished:
+        @staticmethod
+        def connect(slot):
+            pass
+
+    def close(self):
+        pass
+
+
+def open_view(win, position):
+    win.open_large(win.tree.topLevelItem(position))
+    win._view.setAttribute(Qt.WA_DeleteOnClose, False)
+    win._view.show_photo()
+    return win._view
+
+
+def test_view_follows_the_table_and_shows_choices(batch):
+    """Отзыв с работы: в просмотре подтверждать Enter и видеть варианты на цифры."""
+    win, _ = batch
+    view = open_view(win, 1)
+    assert win.tree.selectedItems() == [win.tree.topLevelItem(1)]
+    photo = win.session.match.photos[win._selected_indexes()[0]]
+    hint = view.hint.text()
+    assert "Новое имя: %s" % review_session.row_values(photo)[0] in hint
+    assert "%d — не переименовывать" % (review_session.ALTERNATIVES + 1) in hint and "Enter" in hint
+    for number, candidate in enumerate(win.session.alternatives(photo)[:review_session.ALTERNATIVES], 1):
+        assert "%d — %s" % (number, candidate.category) in hint
+    QTest.keyClick(view, Qt.Key_Right)
+    assert win.tree.selectedItems() == [win.tree.topLevelItem(2)]
+    view.close()
+
+
+def test_enter_in_view_confirms_and_shows_next_row(batch):
+    win, _ = batch
+    view = open_view(win, 0)
+    filename = rows(win)[0].text(0)
+    QTest.keyClick(view, Qt.Key_Return)
+    assert row_of(win, filename).text(2) == "выбрано вручную"
+    assert win.tree.selectedItems() == [win.tree.topLevelItem(1)]
+    assert view.name == rows(win)[1].text(0) and view.isVisible()
+    view.close()
+
+
+def shortcut(view, sequence):
+    from PyQt5.QtGui import QKeySequence
+    from PyQt5.QtWidgets import QShortcut
+
+    return next(s for s in view.findChildren(QShortcut) if s.key() == QKeySequence(sequence))
+
+
+def test_ctrl_s_in_view_applies_the_category(batch):
+    win, _ = batch
+    view = open_view(win, 0)
+    filename = view.name
+    choose_category(win, "Кулер")
+    shortcut(view, "Ctrl+S").activated.emit()
+    assert row_of(win, filename).text(1).startswith("Кулер")
+    assert view.name == rows(win)[1].text(0)
+    view.close()
+
+
+def test_digits_and_undo_in_view(batch):
+    win, _ = batch
+    view = open_view(win, 0)
+    filename = view.name
+    QTest.keyClick(view, Qt.Key_0)
+    assert row_of(win, filename).text(1) == "— не переименовывать —"
+    assert view.name != filename
+    shortcut(view, "Ctrl+Z").activated.emit()
+    assert row_of(win, filename).text(1) != "— не переименовывать —"
+    assert view.name == filename                       # просмотр вернулся к отменённому фото
+    view.close()
+
+
+def test_view_ignores_other_keys_and_closes_with_the_folder(batch):
+    win, _ = batch
+    view = open_view(win, 0)
+    before = [row.text(1) for row in rows(win)]
+    QTest.keyClick(view, Qt.Key_7)
+    QTest.keyClick(view, Qt.Key_1, Qt.ControlModifier)
+    assert [row.text(1) for row in rows(win)] == before
+    win.apply_folder()
+    assert win._view is None and not view.isVisible()
 
 
 def test_long_path_does_not_widen_the_window(batch):
