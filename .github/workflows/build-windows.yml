@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Python 3.8.10 (как в сборке: скачивание библиотек и модели)
+      - name: Python 3.8.10 (для скачивания библиотек и модели)
         uses: actions/setup-python@v5
         with:
           python-version: "3.8.10"
