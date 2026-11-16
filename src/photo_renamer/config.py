@@ -34,7 +34,6 @@ class AppConfig:
     cache_dir: str = "cache"
     names_file: str = "names.txt"
     theme: str = "light"       # light | dark | system (переключается лампочкой в окне)
-    interface: str = "qt"      # qt — окна на PyQt5 (основные), tk — прежние на tkinter
     cache_max_mb: float = 2048
     # Файл модели CLIP рядом с программой. Если файла нет или не установлен onnxruntime,
     # программа работает на обычных признаках (см. clipfeat.py).
@@ -157,7 +156,6 @@ _APP_KEYS = {
     "sort": lambda v: None if v in (SORT_BY_NAME, SORT_BY_EXIF) else "допустимо \"name\" или \"exif\"",
     "problem_categories": _check_str_list,
     "logs_dir": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к папке",
-    "interface": lambda v: None if v in ("tk", "qt") else 'ожидается "tk" или "qt"',
     "theme": lambda v: None if v in ("light", "dark", "system") else
              "допустимо \"light\", \"dark\" или \"system\"",
     "names_file": lambda v: None if isinstance(v, str) and v.strip() else "ожидается путь к файлу",
@@ -175,6 +173,7 @@ _APP_KEYS = {
 _OBSOLETE_KEYS = {
     "reference_gap_warning",   # предупреждение «папка мало похожа на эталон» убрано
     "side_order_penalty",      # плата за съёмку сторон не по порядку: правило отменено
+    "interface",               # выбор окон tkinter / PyQt5: прежние окна удалены
 }
 
 

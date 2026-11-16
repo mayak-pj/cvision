@@ -3,24 +3,22 @@
 Собирает папку, которую достаточно скопировать на рабочий компьютер:
 
     CVision\\
-        python\\                 embeddable Python 3.8.10 + библиотеки (с PyQt5) + файлы tkinter
+        python\\                 embeddable Python 3.8.10 + библиотеки (с PyQt5)
         model\\                  модель CLIP (если указана --model)
         src\\photo_renamer\\      код программы
         run.py
         config.example.json, names.example.txt
-        CVision.bat  ярлык запуска (окна на PyQt5); «CVision (прежние окна).bat» — окна на tkinter
+        CVision.bat  ярлык запуска
         Инструкция.txt
 
 Почему так:
 - на рабочем компьютере нет интернета и прав администратора, поэтому ничего не устанавливается:
   Python и библиотеки лежат внутри папки;
-- в embeddable-дистрибутиве Python нет tkinter, его файлы берутся из обычной установки Python 3.8.10;
 - колёса (.whl) — это zip-архивы, поэтому они просто распаковываются в Lib\\site-packages:
   pip на рабочей машине не нужен.
 
 Запуск (см. dist_offline/README.md):
-    python build_portable.py --embed python-3.8.10-embed-amd64.zip --wheels wheels
-                             --tk-from "C:\\Program Files\\Python38" --out "CVision"
+    python build_portable.py --embed python-3.8.10-embed-amd64.zip --wheels wheels --out "CVision"
     python build_portable.py ... --dry-run     # только проверить и показать план
 """
 
@@ -39,21 +37,7 @@ MODEL_FILE = "clip-vit-b32-vision.onnx"   # см. src/photo_renamer/clipfeat.py
 # с программой, и тогда на рабочей машине не нужен ни установщик, ни права администратора.
 VCRUNTIME_FILES = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "concrt140.dll"]
 PROJECT_DIRS = ["src"]
-# Файлы tkinter, которых нет в embeddable-дистрибутиве.
-# zlib1.dll есть не во всех сборках Python: официальная с python.org его содержит,
-# а, например, сборка раннеров GitHub — нет, и tkinter там работает без него.
-# Поэтому он копируется, только если найден.
-# Раскладка повторяет обычную установку Python: библиотеки Tcl/Tk лежат в DLLs\, а их файлы —
-# в tcl\ рядом. При такой раскладке Tcl находит свои файлы сам, относительно своей DLL,
-# и не нужны переменные окружения (с путём, где есть кириллица, они портятся).
-TK_FILES = [
-    ("DLLs/_tkinter.pyd", "DLLs/_tkinter.pyd", True),
-    ("DLLs/tcl86t.dll", "DLLs/tcl86t.dll", True),
-    ("DLLs/tk86t.dll", "DLLs/tk86t.dll", True),
-    ("DLLs/zlib1.dll", "DLLs/zlib1.dll", False),
-]
-TK_DIRS = [("Lib/tkinter", "Lib/tkinter"), ("tcl", "tcl")]
-# Без этих файлов новые окна (PyQt5) не откроются: оконный модуль Qt для Windows и основные библиотеки.
+# Без этих файлов окно программы (PyQt5) не откроется: оконный модуль Qt для Windows и основные библиотеки.
 QT_FILES = ["PyQt5/QtWidgets.pyd", "PyQt5/Qt5/bin/Qt5Core.dll", "PyQt5/Qt5/bin/Qt5Widgets.dll",
             "PyQt5/Qt5/bin/Qt5Svg.dll", "PyQt5/Qt5/plugins/platforms/qwindows.dll",
             "PyQt5/Qt5/plugins/imageformats/qsvg.dll"]
@@ -62,13 +46,8 @@ rem Запуск программы. Консоль не нужна: pythonw.exe
 set HERE=%~dp0
 start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" %*
 """
-TK_LAUNCHER = """@echo off
-rem Прежние окна (tkinter) на этот запуск, настройка interface не меняется.
-set HERE=%~dp0
-start "" "%HERE%python\\pythonw.exe" "%HERE%run.py" --tk
-"""
 CHECK_LAUNCHER = """@echo off
-rem Проверка сборки. Запускать нужно именно встроенным Python: в чужом нет ни библиотек, ни tkinter.
+rem Проверка сборки. Запускать нужно именно встроенным Python: в чужом нет библиотек.
 set HERE=%~dp0
 "%HERE%python\\python.exe" "%HERE%check_install.py"
 pause
@@ -81,15 +60,11 @@ pause
 """
 # Содержимое python38._pth: пути поиска модулей для embeddable Python.
 # «import site» обязателен, иначе не подхватятся пакеты из Lib\site-packages;
-# «Lib» нужен сам по себе — там лежит tkinter (без этой строки окно не запускается);
-# «DLLs» — там _tkinter.pyd и библиотеки Tcl/Tk;
 # «..\src» — код программы. Файл читается как ASCII, поэтому без комментариев по-русски.
 PTH_CONTENT = """python38.zip
 .
 ..
 ..\\src
-DLLs
-Lib
 Lib\\site-packages
 import site
 """
@@ -108,16 +83,11 @@ class BuildError(Exception):
     pass
 
 
-def check_inputs(embed: Path, wheels: Path, tk_from: Path) -> None:
+def check_inputs(embed: Path, wheels: Path) -> None:
     if not embed.is_file() or embed.suffix.lower() != ".zip":
         raise BuildError("Не найден архив embeddable Python: %s" % embed)
     if not wheels.is_dir() or not list(wheels.glob("*.whl")):
         raise BuildError("В папке %s нет ни одного файла .whl" % wheels)
-    if tk_from is not None:
-        missing = [name for name, _, required in TK_FILES if required and not (tk_from / name).is_file()]
-        missing += [name for name, _ in TK_DIRS if not (tk_from / name).is_dir()]
-        if missing:
-            raise BuildError("В установке Python (%s) не найдено: %s" % (tk_from, ", ".join(missing)))
 
 
 def wheel_list(wheels: Path):
@@ -149,20 +119,15 @@ def wrong_platform_wheels(wheels: Path):
     return [wheel.name for wheel in wheel_list(wheels) if not wheel_fits(wheel.name)]
 
 
-def plan(embed: Path, wheels: Path, tk_from: Path, out: Path, model: Path = None):
+def plan(embed: Path, wheels: Path, out: Path, model: Path = None):
     """Человекочитаемый план сборки (используется и для --dry-run)."""
     lines = ["Куда собираем: %s" % out,
              "Python: %s" % embed.name,
              "Библиотеки (%d):" % len(wheel_list(wheels))]
     lines += ["    " + wheel.name for wheel in wheel_list(wheels)]
-    lines.append("Файлы tkinter: %s" % ("из " + str(tk_from) if tk_from else "НЕ КОПИРУЮТСЯ (окно не запустится)"))
-    if tk_from is not None:
-        optional = [name for name, _, required in TK_FILES if not required and not (tk_from / name).is_file()]
-        if optional:
-            lines.append("    необязательных файлов нет (обычно не мешает): " + ", ".join(optional))
     has_qt = any(w.name.lower().startswith("pyqt5_qt5-") or w.name.lower().startswith("pyqt5-qt5-")
                  for w in wheel_list(wheels))
-    lines.append("Новые окна (PyQt5): %s" % ("есть" if has_qt else "НЕТ колеса PyQt5-Qt5 (будут только прежние окна)"))
+    lines.append("Окно (PyQt5): %s" % ("есть" if has_qt else "НЕТ колеса PyQt5-Qt5 (сборка остановится)"))
     lines.append("Код программы: " + ", ".join(PROJECT_DIRS + PROJECT_FILES))
     lines.append("Модель CLIP: %s" % (model if model else "НЕ КОПИРУЕТСЯ (программа будет работать слабее)"))
     bad = wrong_platform_wheels(wheels)
@@ -205,34 +170,11 @@ def extract_wheels(wheels: Path, site_packages: Path) -> int:
     return count
 
 
-def copy_tkinter(tk_from: Path, python_dir: Path) -> None:
-    (python_dir / "DLLs").mkdir(exist_ok=True)
-    for source, target, required in TK_FILES:
-        path = tk_from / source
-        if path.is_file():
-            shutil.copy2(path, python_dir / target)
-        elif required:
-            raise BuildError("Не найден файл tkinter: %s" % path)
-    for source, target in TK_DIRS:
-        destination = python_dir / target
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.copytree(tk_from / source, destination)
-
-
-def verify_tkinter(python_dir: Path) -> None:
-    """После копирования проверяем, что окно будет чем запускать."""
-    missing = [target for _, target, required in TK_FILES
-               if required and not (python_dir / target).is_file()]
-    missing += [target for _, target in TK_DIRS if not (python_dir / target).is_dir()]
-    if missing:
-        raise BuildError("В собранном Python не хватает файлов tkinter: %s" % ", ".join(missing))
-
-
 def verify_qt(site_packages: Path) -> str:
-    """PyQt5 в сборке и все ли файлы на месте. Без PyQt5 работают только прежние окна."""
+    """PyQt5 в сборке и все ли файлы на месте. Без него окно программы не откроется."""
     if not (site_packages / "PyQt5").is_dir():
-        return "НЕТ (работают только прежние окна; скачайте библиотеки заново: download_wheels.py)"
+        raise BuildError("В библиотеках нет PyQt5: окно программы не откроется. "
+                         "Скачайте библиотеки заново: download_wheels.py")
     missing = [name for name in QT_FILES if not (site_packages / name).is_file()]
     if missing:
         raise BuildError("В PyQt5 не хватает файлов: %s. Нужны колёса PyQt5, PyQt5-Qt5 и PyQt5-sip "
@@ -300,13 +242,12 @@ def copy_project(project: Path, out: Path) -> None:
 
 def write_launchers(out: Path) -> None:
     (out / "CVision.bat").write_text(LAUNCHER, encoding="cp866")
-    (out / "CVision (прежние окна).bat").write_text(TK_LAUNCHER, encoding="cp866")
     (out / "Запуск с консолью (для ошибок).bat").write_text(CONSOLE_LAUNCHER, encoding="cp866")
     # отдельный ярлык для проверки: иначе её запускают чужим Python и получают «No module named numpy»
     (out / "Проверка сборки.bat").write_text(CHECK_LAUNCHER, encoding="cp866")
 
 
-def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path,
+def build(embed: Path, wheels: Path, out: Path, project: Path,
           model: Path = None, vcruntime: Path = None) -> None:
     if out.exists():
         shutil.rmtree(out)
@@ -321,10 +262,7 @@ def build(embed: Path, wheels: Path, tk_from: Path, out: Path, project: Path,
     pth[0].write_text(PTH_CONTENT, encoding="ascii")
 
     extracted = extract_wheels(wheels, python_dir / "Lib" / "site-packages")
-    if tk_from is not None:
-        copy_tkinter(tk_from, python_dir)
-        verify_tkinter(python_dir)
-    print("Новые окна (PyQt5): " + verify_qt(python_dir / "Lib" / "site-packages"))
+    print("Окно (PyQt5): " + verify_qt(python_dir / "Lib" / "site-packages"))
     copied, missing = install_vcruntime(python_dir, python_dir / "Lib" / "site-packages", vcruntime)
     print("Библиотеки Visual C++: %s" % (", ".join("%s (%s)" % (n, how) for n, how in sorted(copied.items()))
                                          or "не найдено ничего"))
@@ -347,7 +285,6 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--embed", required=True, help="архив python-3.8.10-embed-amd64.zip")
     parser.add_argument("--wheels", required=True, help="папка с .whl (см. download_wheels.py)")
-    parser.add_argument("--tk-from", help=r'обычная установка Python 3.8.10, например C:\Program Files\Python38')
     parser.add_argument("--out", required=True, help="папка дистрибутива")
     parser.add_argument("--model", help="папка или файл модели CLIP (см. tools/get_clip_model.py)")
     parser.add_argument("--vcruntime", help="откуда взять библиотеки Visual C++ "
@@ -358,21 +295,20 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     embed, wheels = Path(args.embed), Path(args.wheels)
-    tk_from = Path(args.tk_from) if args.tk_from else None
     out, project = Path(args.out), Path(args.project)
     model = Path(args.model) if args.model else None
     # Без этих библиотек onnxruntime не загрузится, а значит не будет работать CLIP.
     vcruntime = Path(args.vcruntime) if args.vcruntime else (system_dll_dir() if os.name == "nt" else None)
     try:
-        check_inputs(embed, wheels, tk_from)
-        print(plan(embed, wheels, tk_from, out, model))
+        check_inputs(embed, wheels)
+        print(plan(embed, wheels, out, model))
         if args.dry_run:
             print("\n--dry-run: ничего не записано.")
             return 0
         if os.name != "nt":
             print("\nВНИМАНИЕ: сборка рассчитана на Windows. Здесь она соберётся, "
                   "но проверить запуск можно только на Windows.")
-        build(embed, wheels, tk_from, out, project, model, vcruntime)
+        build(embed, wheels, out, project, model, vcruntime)
     except BuildError as exc:
         print("ОШИБКА: %s" % exc)
         return 1

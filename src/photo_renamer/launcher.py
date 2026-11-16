@@ -1,9 +1,13 @@
-"""Запуск окон: прежних (tkinter) или новых (PyQt5). Не загружает ни одну из этих библиотек раньше времени."""
+"""Запуск окна программы (PyQt5). Если PyQt5 не загружается, об этом говорит сообщение Windows:
+программа запускается через pythonw.exe, и консоли, где был бы виден текст ошибки, нет."""
 
+import os
 import sys
-from typing import Optional
 
 from . import config as cfg
+
+QT_MISSING = ("Окно программы не запускается: не загружается PyQt5 (%s).\n\n"
+              "Запустите «Проверка сборки.bat» и сообщите, что написано в строке «Окно (PyQt5)».")
 
 
 def load_qt():
@@ -11,21 +15,27 @@ def load_qt():
     try:
         from .gui_qt import app
     except ImportError as exc:
-        if sys.stderr is not None:
-            print("Окно на PyQt5 не запускается (%s), открывается прежнее" % exc, file=sys.stderr)
+        tell(QT_MISSING % exc)
         return None
     return app
 
 
-def main(interface: Optional[str] = None) -> None:
-    """interface — выбор на этот запуск; None — как в настройках."""
+def tell(text: str) -> None:
+    """Сообщение без окна программы: в консоль и, на Windows, системным окном."""
+    if sys.stderr is not None:
+        print(text, file=sys.stderr)
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, text, "CVision", 0x10)
+        except Exception:        # noqa — сообщить больше нечем
+            pass
+
+
+def main() -> None:
     config, warnings = cfg.load_config()
     config.ensure_names_file()
-    if (interface or config.interface) == "qt":
-        qt = load_qt()
-        if qt is not None:
-            qt.main(config, warnings)
-            return
-    from .gui import app
-
-    app.main()
+    qt = load_qt()
+    if qt is not None:
+        qt.main(config, warnings)

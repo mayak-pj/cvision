@@ -3,11 +3,11 @@
     python\\python.exe check_install.py
 
 Проверяет то, что обычно ломается на рабочей машине без интернета и без прав администратора:
-версию Windows и Python, наличие библиотек, работу окна (tkinter), новые окна (PyQt5), чтение JPEG,
+версию Windows и Python, наличие библиотек, окно программы (PyQt5), чтение JPEG,
 запись в logs и cache, работу модели CLIP (onnxruntime) с замером скорости, а также сам алгоритм
 на маленьком проверочном изображении.
 
-Новые окна проверяются отдельным процессом (check_install.py --qt-probe): если Qt не найдёт свои
+Окно проверяется отдельным процессом (check_install.py --qt-probe): если Qt не найдёт свои
 модули, он обрывает процесс без сообщения, и иначе оборвалась бы вся проверка. Проба идёт на
 настоящем оконном модуле Windows: offscreen на Windows 7 у соседнего проекта сам обрушивал проверку.
 """
@@ -46,7 +46,7 @@ def own_python():
     """Проверка запущена встроенным Python дистрибутива, а не каким-то другим.
 
     Частая ошибка: берут отдельно скачанный embeddable Python, в котором нет ни библиотек,
-    ни tkinter, и получают непонятное «No module named numpy».
+    и получают непонятное «No module named numpy».
     """
     bundled = HERE / "python" / ("python.exe" if os.name == "nt" else "python")
     if not bundled.exists():
@@ -83,19 +83,6 @@ def libraries():
 
     assert linear_sum_assignment is not None
     return "numpy %s, scipy %s, Pillow %s" % (numpy.__version__, scipy.__version__, PIL.__version__)
-
-
-def window():
-    from photo_renamer.gui import theme  # находит библиотеки Tcl/Tk рядом с python.exe
-
-    import tkinter
-
-    root = tkinter.Tk()
-    root.withdraw()
-    version = root.tk.call("info", "patchlevel")
-    theme.apply(root, "light")
-    root.destroy()
-    return "Tk %s, светлое оформление применяется" % version
 
 
 QT_TIMEOUT = 90          # первое окно на медленной машине открывается долго
@@ -144,7 +131,7 @@ def qt_window():
     try:
         import PyQt5  # noqa: F401
     except ImportError as exc:
-        raise RuntimeError("PyQt5 не найден (%s): работают только прежние окна" % exc)
+        raise RuntimeError("PyQt5 не найден (%s): окно программы не откроется" % exc)
     command = [sys.executable, str(HERE / "check_install.py"), "--qt-probe"]
     env = dict(os.environ)
     env.pop("QT_QPA_PLATFORM", None)         # настоящий оконный модуль, не offscreen
@@ -169,7 +156,7 @@ def qt_window():
     except Exception as exc:                 # noqa — проверка не должна падать из-за отчёта
         where = "; подробности собрать не удалось: %s" % exc
     tail = (out + "\n" + done.stderr.decode("utf-8", "replace")).strip().splitlines()[-3:]
-    raise RuntimeError("новые окна не запускаются (код %s): %s%s. Прежние окна работают — «CVision (прежние окна).bat»"
+    raise RuntimeError("окно не запускается (код %s): %s%s"
                        % (done.returncode, " | ".join(tail) or "без сообщения", where))
 
 
@@ -265,8 +252,7 @@ def main():
     check("Windows", windows_version)
     check("Python", python_version)
     check("Библиотеки", libraries)
-    check("Окно (tkinter)", window)
-    check("Новые окна (PyQt5)", qt_window)
+    check("Окно (PyQt5)", qt_window)
     check("Чтение JPEG и признаки", jpeg_and_features)
     check("Модель CLIP", clip_model)
     check("Папки logs и cache", folders)

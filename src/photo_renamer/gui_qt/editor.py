@@ -1,6 +1,6 @@
 """Редактор эталона на PyQt5: выделить фото → выбрать категорию и число ракурсов → переименовать.
 
-Логика — в EditorSession, та же, что у окна на tkinter; порядок работы и клавиши те же.
+Логика — в EditorSession.
 """
 
 from typing import Optional
@@ -68,7 +68,7 @@ class ReferenceEditor(QMainWindow):
         body.addWidget(self.grid, 1)
         body.addWidget(self._build_side())
         layout.addLayout(self._build_bottom())
-        # Ctrl+A и Ctrl+Z в поле ввода остаются за полем (как и в окне на tkinter), Ctrl+S работает отовсюду:
+        # Ctrl+A и Ctrl+Z в поле ввода остаются за полем (как было и в прежних окнах), Ctrl+S работает отовсюду:
         # набрать категорию и тут же нажать сочетание — обычный ход работы
         QShortcut(QKeySequence("Ctrl+S"), self, activated=self.rename_selected)
         QShortcut(QKeySequence("Ctrl+Z"), self, activated=self.undo)

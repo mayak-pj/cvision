@@ -18,7 +18,7 @@ spec.loader.exec_module(build_portable)
 
 @pytest.fixture
 def parts(tmp_path):
-    """Поддельные: архив embeddable Python, папка колёс, установка Python с tkinter."""
+    """Поддельные: архив embeddable Python и папка колёс (с PyQt5: без него сборка останавливается)."""
     embed = tmp_path / "python-3.8.10-embed-amd64.zip"
     with zipfile.ZipFile(embed, "w") as archive:
         archive.writestr("python.exe", "")
@@ -33,56 +33,44 @@ def parts(tmp_path):
                           ("scipy-1.10.1-cp38-cp38-win_amd64.whl", "scipy/__init__.py")):
         with zipfile.ZipFile(wheels / name, "w") as archive:
             archive.writestr(payload, "# заглушка\n")
-
-    tk_from = tmp_path / "Python38"
-    for name, _, _required in build_portable.TK_FILES:
-        path = tk_from / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"\x00")
-    for name, _ in build_portable.TK_DIRS:
-        (tk_from / name).mkdir(parents=True, exist_ok=True)
-        (tk_from / name / "init.tcl").write_text("", encoding="utf-8")
-    return embed, wheels, tk_from
+    _qt_wheels(wheels)
+    return embed, wheels
 
 
 def test_check_inputs(tmp_path, parts):
-    embed, wheels, tk_from = parts
-    build_portable.check_inputs(embed, wheels, tk_from)
+    embed, wheels = parts
+    build_portable.check_inputs(embed, wheels)
 
     with pytest.raises(build_portable.BuildError, match="embeddable"):
-        build_portable.check_inputs(tmp_path / "нет.zip", wheels, tk_from)
+        build_portable.check_inputs(tmp_path / "нет.zip", wheels)
     empty = tmp_path / "пусто"
     empty.mkdir()
     with pytest.raises(build_portable.BuildError, match="whl"):
-        build_portable.check_inputs(embed, empty, tk_from)
-    (tk_from / "DLLs" / "_tkinter.pyd").unlink()
-    with pytest.raises(build_portable.BuildError, match="_tkinter"):
-        build_portable.check_inputs(embed, wheels, tk_from)
+        build_portable.check_inputs(embed, empty)
 
 
 def test_wrong_platform_wheels_detected(tmp_path, parts):
-    embed, wheels, tk_from = parts
+    embed, wheels = parts
     with zipfile.ZipFile(wheels / "numpy-1.24.4-cp311-cp311-macosx_11_0_arm64.whl", "w") as archive:
         archive.writestr("numpy/__init__.py", "")
     with zipfile.ZipFile(wheels / "six-1.16.0-py2.py3-none-any.whl", "w") as archive:
         archive.writestr("six.py", "")          # не зависит от платформы — это нормально
     bad = build_portable.wrong_platform_wheels(wheels)
     assert bad == ["numpy-1.24.4-cp311-cp311-macosx_11_0_arm64.whl"]
-    assert "ВНИМАНИЕ" in build_portable.plan(embed, wheels, tk_from, tmp_path / "out")
+    assert "ВНИМАНИЕ" in build_portable.plan(embed, wheels, tmp_path / "out")
 
 
 def test_build_creates_distribution(tmp_path, parts):
-    embed, wheels, tk_from = parts
+    embed, wheels = parts
     out = tmp_path / "CVision"
-    build_portable.build(embed, wheels, tk_from, out, ROOT)
+    build_portable.build(embed, wheels, out, ROOT)
 
     python_dir = out / "python"
     assert (python_dir / "python.exe").exists()
     pth = (python_dir / "python38._pth").read_text(encoding="ascii")
     lines = pth.split()
     assert "import" in pth and "..\\src" in lines and not pth.strip().startswith("#import")
-    # без строки «Lib» не находится tkinter: окно не запускается
-    assert "Lib" in lines and "Lib\\site-packages" in lines
+    assert "Lib\\site-packages" in lines
 
     site_packages = python_dir / "Lib" / "site-packages"
     assert (site_packages / "numpy" / "__init__.py").exists()
@@ -93,35 +81,20 @@ def test_build_creates_distribution(tmp_path, parts):
     check = (out / "Проверка сборки.bat").read_text(encoding="cp866")
     assert "python\\python.exe" in check and "check_install.py" in check
 
-    # раскладка как в обычной установке Python: DLLs\ рядом с tcl\ — тогда Tcl находит файлы сам
-    assert (python_dir / "DLLs" / "_tkinter.pyd").exists()
-    assert (python_dir / "DLLs" / "tcl86t.dll").exists()
-    assert (python_dir / "tcl" / "init.tcl").exists()
-    assert (python_dir / "Lib" / "tkinter" / "init.tcl").exists()
-    assert "DLLs" in pth.split()
-
     assert (out / "run.py").exists() and (out / "src" / "photo_renamer" / "matcher.py").exists()
     assert not list((out / "src").rglob("__pycache__"))
     assert (out / "config.example.json").exists() and (out / "names.example.txt").exists()
     assert (out / "CVision.bat").exists()
+    assert not (out / "CVision (прежние окна).bat").exists()       # прежних окон больше нет
     assert (out / "Запуск с консолью (для ошибок).bat").exists()
     assert (out / "Инструкция.txt").exists() and (out / "check_install.py").exists()
     assert (out / "logs").is_dir() and (out / "cache").is_dir()
 
 
-def test_build_without_tkinter_warns(tmp_path, parts):
-    embed, wheels, _ = parts
-    text = build_portable.plan(embed, wheels, None, tmp_path / "out")
-    assert "НЕ КОПИРУЮТСЯ" in text
-    build_portable.build(embed, wheels, None, tmp_path / "out", ROOT)
-    assert not (tmp_path / "out" / "python" / "_tkinter.pyd").exists()
-
-
 def test_dry_run_writes_nothing(tmp_path, parts, capsys):
-    embed, wheels, tk_from = parts
+    embed, wheels = parts
     out = tmp_path / "out"
-    code = build_portable.main(["--embed", str(embed), "--wheels", str(wheels), "--tk-from", str(tk_from),
-                                "--out", str(out), "--project", str(ROOT), "--dry-run"])
+    code = build_portable.main(["--embed", str(embed), "--wheels", str(wheels), "--out", str(out), "--project", str(ROOT), "--dry-run"])
     assert code == 0 and not out.exists()
     assert "dry-run" in capsys.readouterr().out
 
@@ -156,27 +129,6 @@ def test_console_output_survives_limited_encoding(tmp_path):
     finally:
         sys.stdout = original
     assert b"?" in buffer.getvalue()        # кириллица заменена, программа не упала
-
-
-def test_optional_zlib_is_not_required(tmp_path, parts):
-    """zlib1.dll есть не во всех сборках Python (например, его нет у раннеров GitHub),
-    и tkinter там работает без него."""
-    embed, wheels, tk_from = parts
-    (tk_from / "DLLs" / "zlib1.dll").unlink()
-    build_portable.check_inputs(embed, wheels, tk_from)          # не ошибка
-    assert "необязательных файлов нет" in build_portable.plan(embed, wheels, tk_from, tmp_path / "out")
-
-    out = tmp_path / "out"
-    build_portable.build(embed, wheels, tk_from, out, ROOT)
-    assert (out / "python" / "DLLs" / "_tkinter.pyd").exists()
-    assert not (out / "python" / "DLLs" / "zlib1.dll").exists()
-
-
-def test_missing_required_tk_file_is_an_error(tmp_path, parts):
-    embed, wheels, tk_from = parts
-    (tk_from / "DLLs" / "tk86t.dll").unlink()
-    with pytest.raises(build_portable.BuildError, match="tk86t"):
-        build_portable.check_inputs(embed, wheels, tk_from)
 
 
 def test_wheel_data_is_moved_into_site_packages(tmp_path):
@@ -242,33 +194,34 @@ def _qt_wheels(wheels: Path, skip: str = "") -> None:
 
 
 def test_build_with_qt_has_its_files_and_launcher(tmp_path, parts, capsys):
-    embed, wheels, tk_from = parts
-    _qt_wheels(wheels)
+    embed, wheels = parts
     assert build_portable.wrong_platform_wheels(wheels) == []     # abi3 и py3-none-win_amd64 годятся
-    assert "Новые окна (PyQt5): есть" in build_portable.plan(embed, wheels, tk_from, tmp_path / "out")
+    assert "Окно (PyQt5): есть" in build_portable.plan(embed, wheels, tmp_path / "out")
     out = tmp_path / "CVision"
-    build_portable.build(embed, wheels, tk_from, out, ROOT)
-    assert "Новые окна (PyQt5): есть" in capsys.readouterr().out
+    build_portable.build(embed, wheels, out, ROOT)
+    assert "Окно (PyQt5): есть" in capsys.readouterr().out
     assert (out / "python" / "Lib" / "site-packages" / "PyQt5" / "Qt5" / "plugins" / "platforms" / "qwindows.dll").is_file()
     main = (out / "CVision.bat").read_text(encoding="cp866")
-    assert "--tk" not in main and "--qt" not in main          # окна по настройке, по умолчанию новые
-    old = (out / "CVision (прежние окна).bat").read_text(encoding="cp866")
-    assert "pythonw.exe" in old and "run.py\" --tk" in old
-    assert not (out / "CVision (новые окна).bat").exists()
+    assert "pythonw.exe" in main and "run.py" in main
 
 
 def test_build_with_broken_qt_is_an_error(tmp_path, parts):
-    embed, wheels, tk_from = parts
+    embed, _ = parts
+    wheels = embed.parent / "колёса"
+    wheels.mkdir()
     _qt_wheels(wheels, skip="PyQt5/Qt5/plugins/platforms/qwindows.dll")
     with pytest.raises(build_portable.BuildError, match="qwindows"):
-        build_portable.build(embed, wheels, tk_from, tmp_path / "CVision", ROOT)
+        build_portable.build(embed, wheels, tmp_path / "CVision", ROOT)
 
 
-def test_build_without_qt_says_only_old_windows(tmp_path, parts, capsys):
-    embed, wheels, tk_from = parts
-    assert "НЕТ колеса PyQt5-Qt5" in build_portable.plan(embed, wheels, tk_from, tmp_path / "out")
-    build_portable.build(embed, wheels, tk_from, tmp_path / "CVision", ROOT)
-    assert "только прежние окна" in capsys.readouterr().out
+def test_build_without_qt_is_an_error(tmp_path, parts):
+    """Прежних окон на tkinter больше нет: без PyQt5 программе нечем открыть окно."""
+    embed, wheels = parts
+    for wheel in wheels.glob("PyQt5*.whl"):
+        wheel.unlink()
+    assert "НЕТ колеса PyQt5-Qt5" in build_portable.plan(embed, wheels, tmp_path / "out")
+    with pytest.raises(build_portable.BuildError, match="PyQt5"):
+        build_portable.build(embed, wheels, tmp_path / "CVision", ROOT)
 
 
 @pytest.mark.parametrize("name, fits", [
@@ -322,8 +275,8 @@ def _check_install():
     return module
 
 
-def test_qt_failure_is_explained_and_old_windows_named(tmp_path, monkeypatch):
-    """Qt обрывает процесс без сообщения. Проверка должна сказать, что прежние окна работают,
+def test_qt_failure_is_explained(tmp_path, monkeypatch):
+    """Qt обрывает процесс без сообщения. Проверка должна назвать причину
     и сохранить подробный вывод Qt о поиске модулей."""
     pytest.importorskip("PyQt5")
     module = _check_install()
@@ -345,7 +298,7 @@ def test_qt_failure_is_explained_and_old_windows_named(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError) as error:
         module.qt_window()
     text = str(error.value)
-    assert "Прежние окна работают" in text and "platform plugin" in text
+    assert "окно не запускается" in text and "platform plugin" in text
     assert "QT_QPA_PLATFORM" not in calls[0]                  # настоящий оконный модуль, не offscreen
     assert calls[0]["PYTHONIOENCODING"] == "utf-8"             # на Windows 7 вместо русских букв было «??????»
     assert calls[1].get("QT_DEBUG_PLUGINS") == "1"

@@ -42,7 +42,7 @@
 - Windows 7 x64 SP1, i5-6500, 16 GB RAM, **без прав администратора и без интернета**.
 - Фото лежат на сетевых дисках, около 15 МБ каждое. В папке от 1 до 250 фото, папок от 1 до 1000+.
 - Python 3.8.10 embeddable (последняя версия с поддержкой Windows 7) + офлайн-wheel-файлы.
-- Зависимости: Pillow, NumPy, SciPy (`linear_sum_assignment`), tkinter. Без нейросетей и облачных API.
+- Зависимости: Pillow, NumPy, SciPy (`linear_sum_assignment`), PyQt5; необязательно onnxruntime с моделью CLIP. Без облачных API.
 - Обработка строго последовательная, без потоков и процессов.
 
 ## Структура проекта
@@ -61,8 +61,7 @@ run.py               точка входа
 ## Окно программы
 
 ```bat
-python run.py          :: окна на PyQt5 (по умолчанию, настройка interface)
-python run.py --tk     :: прежние окна на tkinter на этот запуск
+python run.py
 ```
 
 1. Укажите папку проекта и нажмите «Анализировать». Программа найдёт все папки с фото
@@ -243,7 +242,7 @@ Python, библиотеки и программа лежат в одной па
 ```bat
 python dist_offline\download_wheels.py --dest dist_offline\wheels
 python dist_offline\build_portable.py --embed python-3.8.10-embed-amd64.zip ^
-    --wheels dist_offline\wheels --tk-from "C:\...\Python38" --out "D:\CVision"
+    --wheels dist_offline\wheels --out "D:\CVision"
 "D:\CVision\python\python.exe" "D:\CVision\check_install.py"
 ```
 
@@ -313,7 +312,7 @@ cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 2. Признаки (pHash, гистограмма) и разбор имён эталона ✅
 3. Сопоставление (венгерский алгоритм, пары сторон, нумерация, пороги) ✅
 4. Переименование, dry-run, CSV-лог, отчёт по категориям, откат ✅
-5. GUI на tkinter: первое окно ✅, редактор эталона ✅, пакетное переименование ✅
+5. Окна: первое окно ✅, редактор эталона ✅, пакетное переименование ✅ (с ноября 2026 — на PyQt5, окна на tkinter удалены)
 6. Интеграционное тестирование и настройка порогов ← **идёт сейчас**
    (две пачки замечаний с рабочей машины разобраны, сборка собрана; ждём проверки
    новой сборки на целевой машине — см. [docs/состояние.md](docs/состояние.md))

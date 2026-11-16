@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Python 3.8.10 (нужен ради файлов tkinter)
+      - name: Python 3.8.10 (как в сборке: скачивание библиотек и модели)
         uses: actions/setup-python@v5
         with:
           python-version: "3.8.10"
@@ -64,12 +64,10 @@ jobs:
       - name: Собрать дистрибутив
         shell: pwsh
         run: |
-          $tk = python -c "import sys; print(sys.prefix)"
           $model = if (Test-Path "model/clip-vit-b32-vision.onnx") { @("--model", "model") } else { @() }
           python dist_offline/build_portable.py `
             --embed python-embed.zip `
             --wheels wheels `
-            --tk-from "$tk" `
             --out "dist/CVision" @model
 
       - name: Проверить, что onnxruntime загружается в собранном Python

@@ -1,4 +1,4 @@
-"""Главное окно на PyQt5: те же действия, что у окна на tkinter (логика у них общая)."""
+"""Главное окно на PyQt5."""
 
 import os
 import sys
@@ -240,15 +240,33 @@ def test_every_icon_is_drawn(window):
         assert not window.theme.icon(name).isNull()
 
 
-def test_interface_setting_is_checked():
-    assert cfg.from_dict({"interface": "qt"})[0].interface == "qt"
-    assert cfg.from_dict({"interface": "tk"})[0].interface == "tk"
-    config, warnings = cfg.from_dict({"interface": "gtk"})
-    assert config.interface == "qt" and warnings
+def test_old_interface_setting_is_ignored_quietly():
+    """Настройка interface осталась от прежних окон на tkinter: её больше нет, но и предупреждать не о чем."""
+    config, warnings = cfg.from_dict({"interface": "tk"})
+    assert warnings == [] and not hasattr(config, "interface")
 
 
-def test_new_windows_are_default(monkeypatch):
-    """Без настройки и без ключа открываются окна на PyQt5."""
+def test_launcher_tells_when_qt_is_missing(monkeypatch):
+    """Нет PyQt5 — открыть окно нечем: программа говорит об этом, а не молча закрывается."""
+    told = []
+    monkeypatch.setattr(cfg, "load_config", lambda: cfg.from_dict({}))
+    monkeypatch.setattr(cfg.AppConfig, "ensure_names_file", lambda self: None)
+    monkeypatch.setattr(launcher, "tell", told.append)
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_qt(name, *args, **kwargs):
+        if "gui_qt" in name:                     # from .gui_qt import app
+            raise ImportError("No module named PyQt5")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_qt)
+    launcher.main()
+    assert told and "PyQt5" in told[0] and "Проверка сборки" in told[0]
+
+
+def test_launcher_opens_qt(monkeypatch):
     class Qt:
         @staticmethod
         def main(config, warnings):
@@ -256,32 +274,9 @@ def test_new_windows_are_default(monkeypatch):
 
     opened = []
     monkeypatch.setattr(cfg, "load_config", lambda: cfg.from_dict({}))
-    monkeypatch.setattr(launcher, "load_qt", lambda: Qt)
     monkeypatch.setattr(cfg.AppConfig, "ensure_names_file", lambda self: None)
-    launcher.main()
-    assert opened == ["qt"]
-
-
-def test_launcher_falls_back_when_qt_is_missing(monkeypatch):
-    """Нет PyQt5 — программа всё равно открывается, в прежнем окне."""
-    import photo_renamer.gui.app as tk_app
-
-    opened = []
-    monkeypatch.setattr(launcher, "load_qt", lambda: None)
-    monkeypatch.setattr(tk_app, "main", lambda: opened.append("tk"))
-    launcher.main("qt")
-    assert opened == ["tk"]
-
-
-def test_launcher_opens_qt_when_asked(monkeypatch):
-    class Qt:
-        @staticmethod
-        def main(config, warnings):
-            opened.append("qt")
-
-    opened = []
     monkeypatch.setattr(launcher, "load_qt", lambda: Qt)
-    launcher.main("qt")
+    launcher.main()
     assert opened == ["qt"]
 
 
